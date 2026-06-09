@@ -14,9 +14,9 @@ const state = {
   sessionListScrollTop: 0,
   transitionRootKey: "",
   transitionRootInput: "",
-  transitionDepth: 0,
   transitionBranchLimit: 8,
-  transitionCopiedPath: ""
+  transitionCopiedPath: "",
+  transitionExpandedPaths: new Set()
 };
 
 function escapeHtml(value) {
@@ -329,6 +329,71 @@ function transitionPathText(path, model) {
     .join("\n");
 }
 
+function transitionPathId(path) {
+  return path.map((key) => encodeURIComponent(key)).join("/");
+}
+
+function buildBpmFlow(data) {
+  const lanes = [
+    { label: "Slow burn", range: "60-89", min: 60, max: 89 },
+    { label: "Warmup", range: "90-104", min: 90, max: 104 },
+    { label: "Groove", range: "105-119", min: 105, max: 119 },
+    { label: "Club pace", range: "120-129", min: 120, max: 129 },
+    { label: "Peak time", range: "130-139", min: 130, max: 139 },
+    { label: "Fast lane", range: "140+", min: 140, max: Infinity }
+  ].map((lane) => ({ ...lane, tracks: [], count: 0, totalBpm: 0 }));
+
+  for (const track of uniqueTracks(data.tracks)) {
+    if (!Number.isFinite(track.bpm)) continue;
+    const lane = lanes.find((item) => track.bpm >= item.min && track.bpm <= item.max);
+    if (!lane) continue;
+    lane.tracks.push(track);
+    lane.count += track.playCount || 1;
+    lane.totalBpm += track.bpm;
+  }
+
+  return lanes.map((lane) => ({
+    ...lane,
+    totalTracks: lane.tracks.length,
+    avgBpm: lane.tracks.length ? lane.totalBpm / lane.tracks.length : 0,
+    tracks: lane.tracks
+      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0) || compareTrackTitle(a, b))
+      .slice(0, 5)
+  }));
+}
+
+function buildPrepData(data) {
+  const tracks = uniqueTracks(data.tracks);
+  const rows = tracks.map((track) => {
+    const missing = [];
+    if (!cleanSecondaryText(track.displayArtist)) missing.push("artist");
+    if (!cleanSecondaryText(track.genre)) missing.push("genre");
+    if (!Number.isFinite(track.bpm)) missing.push("BPM");
+    if (!Number.isFinite(track.lengthSeconds)) missing.push("length");
+    if (!track.artUrl) missing.push("art");
+    return {
+      ...track,
+      missing,
+      localReady: track.sourceLabel?.includes("Local file") || track.source === "Local file",
+      spotifyOnly: track.sourceLabel === "Spotify" || track.source === "Spotify"
+    };
+  });
+
+  const localReady = rows.filter((track) => track.localReady);
+  const spotifyOnly = rows.filter((track) => track.spotifyOnly && !track.localReady);
+  const needsMetadata = rows
+    .filter((track) => track.missing.length)
+    .sort((a, b) => b.missing.length - a.missing.length || (b.playCount || 0) - (a.playCount || 0));
+
+  return {
+    total: rows.length,
+    localReady,
+    spotifyOnly,
+    needsMetadata,
+    complete: rows.filter((track) => !track.missing.length)
+  };
+}
+
 function buildStats(data) {
   const dayCounts = new Map();
   const hourCounts = new Map();
@@ -637,6 +702,8 @@ function renderShell() {
           <button data-view="stats" type="button">Stats</button>
           <button data-view="tracks" type="button">Tracks</button>
           <button data-view="paths" type="button">Paths</button>
+          <button data-view="flow" type="button">Flow</button>
+          <button data-view="prep" type="button">Prep</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -773,8 +840,8 @@ function renderDashboard() {
       if (selected) {
         state.transitionRootKey = selected.key;
         state.transitionRootInput = selected.label;
-        state.transitionDepth = 0;
         state.transitionCopiedPath = "";
+        state.transitionExpandedPaths = new Set();
         renderDashboard();
       }
     });
@@ -785,15 +852,27 @@ function renderDashboard() {
       const model = buildTransitionModel(state.data);
       const track = model.trackMap.get(state.transitionRootKey);
       state.transitionRootInput = track ? trackDisplayLabel(track) : "";
-      state.transitionDepth = 0;
+      state.transitionCopiedPath = "";
+      state.transitionExpandedPaths = new Set();
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-reset-transition-tree]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.transitionExpandedPaths = new Set();
       state.transitionCopiedPath = "";
       renderDashboard();
     });
   });
-  document.querySelectorAll("[data-transition-depth]").forEach((button) => {
+  document.querySelectorAll("[data-expand-transition-path]").forEach((button) => {
     button.addEventListener("click", () => {
-      const delta = Number(button.dataset.transitionDepth);
-      state.transitionDepth = Math.max(0, state.transitionDepth + delta);
+      const pathId = button.dataset.expandTransitionPath;
+      if (!pathId) return;
+      if (state.transitionExpandedPaths.has(pathId)) {
+        state.transitionExpandedPaths.delete(pathId);
+      } else {
+        state.transitionExpandedPaths.add(pathId);
+      }
       state.transitionCopiedPath = "";
       renderDashboard();
     });
@@ -835,6 +914,8 @@ function renderActiveView(sessions, selected) {
   if (state.activeView === "stats") return renderStatsView();
   if (state.activeView === "tracks") return renderTracksView();
   if (state.activeView === "paths") return renderPathsView();
+  if (state.activeView === "flow") return renderFlowView();
+  if (state.activeView === "prep") return renderPrepView();
   return renderSetsView(sessions, selected);
 }
 
@@ -894,9 +975,8 @@ function renderPathsView() {
           <h2>Transition Tree</h2>
         </div>
         <div class="view-actions">
-          <span>${state.transitionDepth} ${state.transitionDepth === 1 ? "level" : "levels"}</span>
-          <button data-transition-depth="-1" type="button">Remove depth</button>
-          <button data-transition-depth="1" type="button">Add depth</button>
+          <span>${state.transitionExpandedPaths.size} open ${state.transitionExpandedPaths.size === 1 ? "branch" : "branches"}</span>
+          <button data-reset-transition-tree type="button">Reset tree</button>
         </div>
       </header>
       <section class="path-controls">
@@ -930,7 +1010,7 @@ function renderPathsView() {
       <section class="path-workspace">
         ${
           rootKey
-            ? renderTransitionNode(rootKey, model, state.transitionDepth, [rootKey], 0)
+            ? renderTransitionNode(rootKey, model, [rootKey], 0)
             : `<p class="empty">No transition data found. This needs at least two tracks in a set.</p>`
         }
       </section>
@@ -943,10 +1023,12 @@ function renderPathsView() {
   `;
 }
 
-function renderTransitionNode(key, model, depthRemaining, path, index = 0, transitionCount = 0) {
+function renderTransitionNode(key, model, path, index = 0, transitionCount = 0) {
   const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
   const children = transitionChildrenFor(key, model);
   const pathText = transitionPathText(path, model);
+  const pathId = transitionPathId(path);
+  const isExpanded = state.transitionExpandedPaths.has(pathId);
   const cover = track.artUrl
     ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
     : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
@@ -959,10 +1041,15 @@ function renderTransitionNode(key, model, depthRemaining, path, index = 0, trans
           <span>${escapeHtml(trackSecondary(track))}</span>
         </div>
         <em>${transitionCount ? `${transitionCount}x` : "Root"}</em>
+        ${
+          children.length
+            ? `<button data-expand-transition-path="${escapeHtml(pathId)}" type="button">${isExpanded ? "Hide branch" : "Expand from here"}</button>`
+            : `<span class="path-terminal">End</span>`
+        }
         <button data-copy-transition-path="${escapeHtml(pathText)}" type="button">Copy path</button>
       </div>
       ${
-        depthRemaining > 0 && children.length
+        isExpanded && children.length
           ? `
             <div class="path-children">
               ${children
@@ -970,7 +1057,6 @@ function renderTransitionNode(key, model, depthRemaining, path, index = 0, trans
                   renderTransitionNode(
                     child.key,
                     model,
-                    depthRemaining - 1,
                     [...path, child.key],
                     childIndex,
                     child.count
@@ -979,10 +1065,119 @@ function renderTransitionNode(key, model, depthRemaining, path, index = 0, trans
                 .join("")}
             </div>
           `
-          : depthRemaining > 0
-            ? `<p class="path-end">No historical next track from here.</p>`
-            : ""
+          : ""
       }
+    </div>
+  `;
+}
+
+function renderFlowView() {
+  const lanes = buildBpmFlow(state.data);
+  const max = Math.max(1, ...lanes.map((lane) => lane.count));
+
+  return `
+    <main class="view-page flow-view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">Flow</p>
+          <h2>BPM Lanes</h2>
+        </div>
+        <div class="view-actions">
+          <span>${lanes.reduce((sum, lane) => sum + lane.totalTracks, 0).toLocaleString()} mapped tracks</span>
+        </div>
+      </header>
+      <section class="flow-board">
+        ${lanes.map((lane, index) => renderBpmLane(lane, max, index)).join("")}
+      </section>
+    </main>
+  `;
+}
+
+function renderBpmLane(lane, max, index) {
+  const width = Math.max(4, Math.round((lane.count / max) * 100));
+  return `
+    <section class="flow-lane animated-row" style="--row-delay: ${index * 36}ms">
+      <div class="flow-lane-head">
+        <div>
+          <p class="eyebrow">${escapeHtml(lane.range)} BPM</p>
+          <h3>${escapeHtml(lane.label)}</h3>
+        </div>
+        <span>${lane.count.toLocaleString()} plays${lane.avgBpm ? ` · ${lane.avgBpm.toFixed(1)} avg BPM` : ""}</span>
+      </div>
+      <div class="flow-meter" aria-hidden="true"><i style="width: ${width}%"></i></div>
+      <div class="flow-tracks">
+        ${
+          lane.tracks.length
+            ? lane.tracks.map((track) => renderCompactTrackLine(track)).join("")
+            : `<p class="empty compact">No tracks in this lane.</p>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderCompactTrackLine(track) {
+  return `
+    <div class="compact-track">
+      <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
+      <span>${escapeHtml(trackSecondary(track))}</span>
+      <em>${track.bpm ? track.bpm.toFixed(1) : ""}${track.playCount ? ` · ${track.playCount} plays` : ""}</em>
+    </div>
+  `;
+}
+
+function renderPrepView() {
+  const prep = buildPrepData(state.data);
+  return `
+    <main class="view-page prep-view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">Prep</p>
+          <h2>Library Readiness</h2>
+        </div>
+        <div class="view-actions">
+          <span>${prep.total.toLocaleString()} unique tracks</span>
+        </div>
+      </header>
+      <section class="prep-summary">
+        ${stat("Local files", prep.localReady.length.toLocaleString(), "usable for offline set prep")}
+        ${stat("Spotify only", prep.spotifyOnly.length.toLocaleString(), "history only, no local audio")}
+        ${stat("Metadata gaps", prep.needsMetadata.length.toLocaleString(), "tracks missing DJ fields")}
+        ${stat("Complete rows", prep.complete.length.toLocaleString(), "artist, genre, BPM, length, art")}
+      </section>
+      <section class="prep-columns">
+        <section class="prep-column">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Cleanup</p>
+              <h2>Needs Metadata</h2>
+            </div>
+          </div>
+          ${prep.needsMetadata.slice(0, 12).map(renderPrepTrack).join("") || `<p class="empty compact">No metadata gaps found.</p>`}
+        </section>
+        <section class="prep-column">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Sources</p>
+              <h2>Spotify Only</h2>
+            </div>
+          </div>
+          ${prep.spotifyOnly.slice(0, 12).map(renderPrepTrack).join("") || `<p class="empty compact">No Spotify-only tracks found.</p>`}
+        </section>
+      </section>
+    </main>
+  `;
+}
+
+function renderPrepTrack(track, index = 0) {
+  const missing = track.missing?.length ? track.missing.join(", ") : track.sourceLabel || track.source || "";
+  return `
+    <div class="prep-track animated-row" style="--row-delay: ${index * 24}ms">
+      <div>
+        <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
+        <span>${escapeHtml(trackSecondary(track))}</span>
+      </div>
+      <em>${escapeHtml(missing)}</em>
     </div>
   `;
 }

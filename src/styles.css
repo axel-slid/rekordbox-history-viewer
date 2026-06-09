@@ -221,6 +221,16 @@ select:focus {
   }
 }
 
+@keyframes meter-in {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
 .status {
   margin: 28px;
   padding: 0 0 16px;
@@ -627,7 +637,9 @@ select:focus {
   font-weight: 850;
 }
 
-.tracks-view {
+.tracks-view,
+.flow-view,
+.prep-view {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -690,11 +702,11 @@ select:focus {
 
 .path-node-line {
   display: grid;
-  grid-template-columns: 34px minmax(180px, 360px) 52px auto;
+  grid-template-columns: 34px minmax(180px, 360px) 52px auto auto;
   align-items: center;
   gap: 12px;
   width: max-content;
-  min-width: min(100%, 560px);
+  min-width: min(100%, 720px);
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
 }
@@ -717,10 +729,15 @@ select:focus {
 }
 
 .path-node-main span,
-.path-node-line em {
+.path-node-line em,
+.path-terminal {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
+}
+
+.path-terminal {
+  font-weight: 700;
 }
 
 .path-children {
@@ -729,6 +746,142 @@ select:focus {
   margin-left: 30px;
   padding-left: 22px;
   border-left: 1px solid var(--line-strong);
+}
+
+.flow-board {
+  display: grid;
+  width: min(1180px, 100%);
+  gap: 0;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+}
+
+.flow-lane {
+  display: grid;
+  gap: 12px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.flow-lane-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.flow-lane-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.flow-meter {
+  height: 2px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.flow-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  animation: meter-in 620ms ease both;
+  transform-origin: left center;
+}
+
+.flow-tracks {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.compact-track {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-track strong,
+.compact-track span,
+.compact-track em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-track strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.compact-track span,
+.compact-track em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.prep-view {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 22px;
+}
+
+.prep-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.prep-summary .stat {
+  padding-right: 18px;
+  padding-left: 0;
+}
+
+.prep-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(1180px, 100%);
+  gap: 38px;
+  margin: 0 auto;
+}
+
+.prep-column {
+  min-width: 0;
+}
+
+.prep-track {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 220px);
+  align-items: center;
+  gap: 18px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.prep-track strong,
+.prep-track span,
+.prep-track em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prep-track strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.prep-track span,
+.prep-track em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .path-end {
@@ -1060,12 +1213,17 @@ td:nth-child(7) {
 
   .stats-panel,
   .stats-top,
-  .sets-layout {
+  .sets-layout,
+  .prep-columns {
     grid-template-columns: 1fr;
   }
 
   .insights-card {
     grid-template-columns: 1fr;
+  }
+
+  .flow-tracks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .donut-wrap {
@@ -1099,7 +1257,8 @@ td:nth-child(7) {
   }
 
   .summary,
-  .mini-stats {
+  .mini-stats,
+  .prep-summary {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1114,6 +1273,24 @@ td:nth-child(7) {
 
   .donut-wrap {
     grid-template-columns: 1fr;
+  }
+
+  .flow-tracks,
+  .prep-track {
+    grid-template-columns: 1fr;
+  }
+
+  .path-node-line {
+    grid-template-columns: 34px minmax(180px, 1fr);
+    width: 100%;
+    min-width: 0;
+  }
+
+  .path-node-line em,
+  .path-node-line button,
+  .path-terminal {
+    grid-column: 2;
+    justify-self: start;
   }
 
   th:nth-child(4),
