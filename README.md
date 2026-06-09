@@ -2,6 +2,28 @@
 
 Turn your Rekordbox play history into a clean desktop dashboard for sets, stats, and tracks.
 
+[Download the latest app here](https://github.com/axel-slid/rekordbox-history-viewer/releases/latest)
+
+## Download
+
+Open the latest release, then download the file for your computer:
+
+- **Mac with Apple Silicon:** `Rekordbox-History-Viewer-0.1.4-mac-apple-silicon.zip`
+- **Windows:** `Rekordbox-History-Viewer-0.1.4-windows.zip`
+- **Linux:** `Rekordbox-History-Viewer-0.1.4-linux.AppImage`
+
+On Mac, unzip the file, then open **Rekordbox History Viewer**. If macOS says the app is damaged because it was downloaded from the internet, run this once in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Rekordbox History Viewer.app"
+```
+
+If the app is still in Downloads instead of Applications, use this instead:
+
+```sh
+xattr -dr com.apple.quarantine "$HOME/Downloads/Rekordbox History Viewer.app"
+```
+
 ![Stats view](docs/screenshots/stats.png)
 
 ## What It Shows
@@ -10,7 +32,7 @@ Turn your Rekordbox play history into a clean desktop dashboard for sets, stats,
 - **Stats:** a GitHub-style activity heatmap, genre donut, total play time, average time per day, busiest day, top source, average BPM, and repeated tracks.
 - **Tracks:** a searchable track library with unique tracks, play counts, last played time, Camelot-style key badges, BPM, length, source, and sorting.
 - **Paths:** start from a song, expand a rightward branching tree of historical next-track choices, see color-coded Camelot keys, and copy any path from the root song.
-- **Exports:** download a setlist or generate a text prompt for manually recreating a set.
+- **Exports:** copy a timed setlist, download a setlist, or generate a text prompt for manually recreating a set.
 
 ## Screenshots
 
