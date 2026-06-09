@@ -21,9 +21,47 @@ async function pathExists(filePath) {
   }
 }
 
+function pythonBinForEnv(envDir) {
+  return process.platform === "win32"
+    ? path.join(envDir, "Scripts", "python.exe")
+    : path.join(envDir, "bin", "python");
+}
+
+function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      ...options,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        ...(options.env || {})
+      }
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(stderr || stdout || `${command} exited with code ${code}`));
+    });
+  });
+}
+
 async function findPython() {
   const root = getProjectRoot();
+  const appEnv = app.isReady() ? pythonBinForEnv(path.join(app.getPath("userData"), "python-env")) : "";
   const candidates = [
+    appEnv,
     path.join(root, ".venv-rekordbox", "bin", "python"),
     path.join(root, ".venv", "bin", "python"),
     "python3",
@@ -31,6 +69,7 @@ async function findPython() {
   ];
 
   for (const candidate of candidates) {
+    if (!candidate) continue;
     if (candidate.includes(path.sep) && !(await pathExists(candidate))) continue;
     return candidate;
   }
@@ -38,11 +77,45 @@ async function findPython() {
   return "python3";
 }
 
+async function pythonHasRekordbox(pythonPath) {
+  try {
+    await runProcess(pythonPath, ["-c", "import pyrekordbox"], { cwd: getProjectRoot() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensurePythonEnvironment() {
+  const root = getProjectRoot();
+  const requirementsPath = path.join(root, "requirements.txt");
+  const pythonPath = await findPython();
+  if (await pythonHasRekordbox(pythonPath)) return pythonPath;
+
+  const envDir = path.join(app.getPath("userData"), "python-env");
+  const envPython = pythonBinForEnv(envDir);
+  const basePython = pythonPath.includes(path.sep) && pythonPath === envPython ? "python3" : pythonPath;
+
+  if (!(await pathExists(envPython))) {
+    await fs.mkdir(envDir, { recursive: true });
+    await runProcess(basePython, ["-m", "venv", envDir], { cwd: root });
+  }
+
+  await runProcess(envPython, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: root });
+  await runProcess(envPython, ["-m", "pip", "install", "-r", requirementsPath], { cwd: root });
+
+  if (!(await pythonHasRekordbox(envPython))) {
+    throw new Error("Python setup finished, but pyrekordbox could not be imported.");
+  }
+
+  return envPython;
+}
+
 async function readRekordboxHistory({ force = false } = {}) {
   if (historyCache && !force) return historyCache;
 
   const scriptPath = path.join(getProjectRoot(), "scripts", "extract_rekordbox_history.py");
-  const pythonPath = await findPython();
+  const pythonPath = await ensurePythonEnvironment();
 
   return new Promise((resolve, reject) => {
     const child = spawn(pythonPath, [scriptPath], {
