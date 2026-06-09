@@ -2,33 +2,38 @@
 
 A clean Electron app for browsing Rekordbox played-track history. It reads your local Rekordbox database, groups tracks into dated sets, resolves Spotify track names when possible, and shows stats like play activity, genre mix, total play time, average time per day, repeated tracks, and a full track library.
 
-![Stats view](docs/screenshots/stats.png)
+## Download And Run
 
-## What You Get
+**Download the app here:** <https://github.com/axel-slid/rekordbox-history-viewer/releases/tag/v0.1.0>
 
-- **Sets:** every dated play session, named like `June 7th, 2026 Set`.
-- **Stats:** GitHub-style play heatmap, genre donut, total play time, average time per day, busiest day, top source, average BPM, and most repeated tracks.
-- **Tracks:** searchable unique track library with play counts, last played time, BPM, length, source, and sorting.
-- **Export helpers:** download a setlist or generate a text prompt that explains how to recreate a mix manually.
+### Mac
 
-## Download It The Easy Way
+1. Click the download link above.
+2. Download `Rekordbox.History.Viewer-0.1.0-arm64-mac.zip`.
+3. Double-click the zip file to unzip it.
+4. Open `Rekordbox History Viewer`.
+5. If macOS blocks it, right-click `Rekordbox History Viewer`, choose **Open**, then choose **Open** again.
 
-The easiest version is the downloadable app from GitHub Releases.
+### Windows
 
-1. Open the **Releases** page for this repo.
-2. Download the newest file for your computer:
-   - Mac: `Rekordbox History Viewer-...-mac.zip`
-   - Windows: `Rekordbox History Viewer-...-win.zip`
-   - Linux: `Rekordbox History Viewer-...-linux...`
-3. Unzip it.
-4. Open **Rekordbox History Viewer**.
-5. If macOS says the app is from an unidentified developer, right-click the app, choose **Open**, then choose **Open** again.
+1. Click the download link above.
+2. Download `Rekordbox.History.Viewer-0.1.0-win.zip`.
+3. Right-click the zip file and choose **Extract All**.
+4. Open the extracted folder.
+5. Double-click `Rekordbox History Viewer.exe`.
+
+### Linux
+
+1. Click the download link above.
+2. Download `Rekordbox.History.Viewer-0.1.0.AppImage`.
+3. Right-click the file, open **Properties**, and allow it to run as a program.
+4. Double-click the AppImage.
 
 The app reads Rekordbox history from your own computer. It does not include anyone else's music library.
 
-## If There Is No Release Yet
+### If The App Download Does Not Work
 
-You can still use the app with very little terminal work on macOS:
+Use the source-code fallback on macOS:
 
 1. Click the green **Code** button on GitHub.
 2. Click **Download ZIP**.
@@ -43,6 +48,15 @@ You only need:
 - Rekordbox installed with existing play history.
 - Node.js LTS from <https://nodejs.org>.
 - Python 3 from <https://www.python.org/downloads/>.
+
+![Stats view](docs/screenshots/stats.png)
+
+## What You Get
+
+- **Sets:** every dated play session, named like `June 7th, 2026 Set`.
+- **Stats:** GitHub-style play heatmap, genre donut, total play time, average time per day, busiest day, top source, average BPM, and most repeated tracks.
+- **Tracks:** searchable unique track library with play counts, last played time, BPM, length, source, and sorting.
+- **Export helpers:** download a setlist or generate a text prompt that explains how to recreate a mix manually.
 
 ## Screenshots
 
