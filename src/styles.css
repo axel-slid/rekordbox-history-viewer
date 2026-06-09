@@ -714,6 +714,12 @@ select:focus {
   min-width: 0;
 }
 
+.builder-key-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .builder-main strong,
 .builder-main span,
 .builder-row em {
@@ -733,6 +739,10 @@ select:focus {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
+}
+
+.builder-row .meta-placeholder {
+  color: #c3cad6;
 }
 
 .builder-candidates {

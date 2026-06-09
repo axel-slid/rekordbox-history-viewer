@@ -233,6 +233,10 @@ function renderKeyBadge(track) {
   `;
 }
 
+function renderBuilderKeyCell(track) {
+  return `<span class="builder-key-cell">${renderKeyBadge(track) || `<em class="meta-placeholder">--</em>`}</span>`;
+}
+
 function canonicalTrackKey(track) {
   const title = normalizeText(track.displayTitle || track.title || "");
   const artist = normalizeText(cleanSecondaryText(track.displayArtist));
@@ -1265,6 +1269,7 @@ function renderSetBuilderView() {
 
 function renderBuilderSong(key, model, index) {
   const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
+  const secondary = trackSecondary(track);
   const isActive = index === state.builderActiveIndex;
   const candidates = builderCandidatesFor(key, model, index);
   const visibleCount = builderVisibleCount(index);
@@ -1280,10 +1285,10 @@ function renderBuilderSong(key, model, index) {
         <div class="small-cover">${cover}</div>
         <div class="builder-main">
           <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
-          <span>${escapeHtml(trackSecondary(track))}</span>
+          <span>${secondary ? escapeHtml(secondary) : "&nbsp;"}</span>
         </div>
-        ${renderKeyBadge(track)}
-        <em>${track.bpm ? `${track.bpm.toFixed(1)} BPM` : ""}</em>
+        ${renderBuilderKeyCell(track)}
+        <em>${Number.isFinite(track.bpm) ? `${track.bpm.toFixed(1)} BPM` : "--"}</em>
       </div>
       ${
         isActive
@@ -1322,9 +1327,9 @@ function renderBuilderCandidate(candidate, index) {
       <div class="small-cover">${cover}</div>
       <div class="builder-main">
         <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
-        ${secondary ? `<span>${escapeHtml(secondary)}</span>` : ""}
+        <span>${secondary ? escapeHtml(secondary) : "&nbsp;"}</span>
       </div>
-      ${renderKeyBadge(track)}
+      ${renderBuilderKeyCell(track)}
       <em>${candidate.transitionCount ? `${candidate.transitionCount}x` : "Library"}</em>
       <em>${escapeHtml(bpmText)}</em>
       <em>${escapeHtml(harmonicText)}</em>
