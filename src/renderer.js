@@ -16,7 +16,14 @@ const state = {
   transitionRootInput: "",
   transitionBranchLimit: 6,
   transitionCopiedPath: "",
-  transitionExpandedPaths: new Set()
+  transitionExpandedPaths: new Set(),
+  builderRootInput: "",
+  builderPath: [],
+  builderActiveIndex: 0,
+  builderGenre: "all",
+  builderSort: "popularity",
+  builderBpmTolerance: 8,
+  builderVisibleCounts: new Map()
 };
 
 function escapeHtml(value) {
@@ -189,6 +196,30 @@ function keyHue(camelot) {
   const match = String(camelot || "").match(/^(\d{1,2})([AB])$/);
   if (!match) return 220;
   return (Number(match[1]) - 1) * 30;
+}
+
+function camelotParts(track) {
+  const match = camelotKey(track?.key).match(/^(\d{1,2})([AB])$/);
+  if (!match) return null;
+  return {
+    number: Number(match[1]),
+    mode: match[2]
+  };
+}
+
+function circularDistance(a, b, size = 12) {
+  const direct = Math.abs(a - b);
+  return Math.min(direct, size - direct);
+}
+
+function harmonicDistance(fromTrack, toTrack) {
+  const from = camelotParts(fromTrack);
+  const to = camelotParts(toTrack);
+  if (!from || !to) return 99;
+  if (from.number === to.number && from.mode === to.mode) return 0;
+  if (from.number === to.number) return 1;
+  const wheelDistance = circularDistance(from.number, to.number);
+  return wheelDistance + (from.mode === to.mode ? 0 : 0.65);
 }
 
 function renderKeyBadge(track) {
@@ -402,6 +433,114 @@ function transitionPathText(path, model) {
 
 function transitionPathId(path) {
   return path.map((key) => encodeURIComponent(key)).join("/");
+}
+
+function builderRootOptions(model) {
+  return Array.from(model.trackMap.entries())
+    .map(([key, track]) => ({
+      key,
+      label: trackDisplayLabel(track),
+      playCount: track.playCount || 0
+    }))
+    .sort((a, b) => b.playCount - a.playCount || a.label.localeCompare(b.label));
+}
+
+function genreOptions(data) {
+  const counts = new Map();
+  for (const track of data.tracks) {
+    const genre = cleanSecondaryText(track.genre);
+    if (!genre || genre.toLowerCase() === "unknown") continue;
+    counts.set(genre, (counts.get(genre) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([genre, count]) => ({ genre, count }));
+}
+
+function builderContextId(index = state.builderActiveIndex) {
+  return transitionPathId(state.builderPath.slice(0, index + 1));
+}
+
+function builderVisibleCount(index = state.builderActiveIndex) {
+  return state.builderVisibleCounts.get(builderContextId(index)) || 5;
+}
+
+function resetBuilderChoices() {
+  state.builderVisibleCounts = new Map();
+}
+
+function bpmDelta(fromTrack, toTrack) {
+  if (!Number.isFinite(fromTrack?.bpm) || !Number.isFinite(toTrack?.bpm)) return Infinity;
+  return Math.abs(fromTrack.bpm - toTrack.bpm);
+}
+
+function passesBuilderFilters(fromTrack, toTrack) {
+  if (state.builderGenre !== "all") {
+    const genre = cleanSecondaryText(toTrack.genre);
+    if (genre !== state.builderGenre) return false;
+  }
+
+  const tolerance = Number(state.builderBpmTolerance);
+  if (Number.isFinite(tolerance) && tolerance >= 0 && Number.isFinite(fromTrack?.bpm) && Number.isFinite(toTrack?.bpm)) {
+    if (Math.abs(fromTrack.bpm - toTrack.bpm) > tolerance) return false;
+  }
+
+  return true;
+}
+
+function builderCandidatesFor(parentKey, model, pathIndex = state.builderActiveIndex) {
+  const parentTrack = model.trackMap.get(parentKey);
+  if (!parentTrack) return [];
+
+  const lockedKeys = new Set(state.builderPath.slice(0, pathIndex + 1));
+  const candidates = new Map();
+
+  for (const child of model.graph.get(parentKey)?.values() || []) {
+    const track = model.trackMap.get(child.key);
+    if (!track || lockedKeys.has(child.key)) continue;
+    candidates.set(child.key, {
+      key: child.key,
+      track,
+      transitionCount: child.count || 0,
+      historical: true
+    });
+  }
+
+  for (const [key, track] of model.trackMap.entries()) {
+    if (lockedKeys.has(key) || candidates.has(key)) continue;
+    candidates.set(key, {
+      key,
+      track,
+      transitionCount: 0,
+      historical: false
+    });
+  }
+
+  return Array.from(candidates.values())
+    .filter((candidate) => passesBuilderFilters(parentTrack, candidate.track))
+    .map((candidate) => ({
+      ...candidate,
+      harmonicDistance: harmonicDistance(parentTrack, candidate.track),
+      bpmDelta: bpmDelta(parentTrack, candidate.track)
+    }))
+    .sort((a, b) => {
+      if (state.builderSort === "harmonic") {
+        return (
+          a.harmonicDistance - b.harmonicDistance ||
+          a.bpmDelta - b.bpmDelta ||
+          b.transitionCount - a.transitionCount ||
+          (b.track.playCount || 0) - (a.track.playCount || 0) ||
+          compareTrackTitle(a.track, b.track)
+        );
+      }
+      return (
+        b.transitionCount - a.transitionCount ||
+        (b.track.playCount || 0) - (a.track.playCount || 0) ||
+        a.harmonicDistance - b.harmonicDistance ||
+        a.bpmDelta - b.bpmDelta ||
+        compareTrackTitle(a.track, b.track)
+      );
+    });
 }
 
 function buildStats(data) {
@@ -711,6 +850,7 @@ function renderShell() {
           <button data-view="stats" type="button">Stats</button>
           <button data-view="tracks" type="button">Tracks</button>
           <button data-view="paths" type="button">Paths</button>
+          <button data-view="builder" type="button">Set Builder</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -896,6 +1036,91 @@ function renderDashboard() {
       renderDashboard();
     });
   });
+  const builderRootInput = document.querySelector("[data-builder-root-input]");
+  if (builderRootInput) {
+    builderRootInput.addEventListener("input", (event) => {
+      state.builderRootInput = event.target.value;
+    });
+  }
+  const builderRootForm = document.querySelector("[data-builder-root-form]");
+  if (builderRootForm) {
+    builderRootForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const model = buildTransitionModel(state.data);
+      const typed = normalizeText(state.builderRootInput);
+      const selected =
+        builderRootOptions(model).find((option) => normalizeText(option.label) === typed) ||
+        builderRootOptions(model).find((option) => normalizeText(option.label).includes(typed));
+      if (selected) {
+        state.builderPath = [selected.key];
+        state.builderRootInput = selected.label;
+        state.builderActiveIndex = 0;
+        resetBuilderChoices();
+        renderDashboard();
+      }
+    });
+  }
+  document.querySelectorAll("[data-builder-root-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const model = buildTransitionModel(state.data);
+      const track = model.trackMap.get(button.dataset.builderRootKey);
+      state.builderPath = [button.dataset.builderRootKey];
+      state.builderRootInput = track ? trackDisplayLabel(track) : "";
+      state.builderActiveIndex = 0;
+      resetBuilderChoices();
+      renderDashboard();
+    });
+  });
+  const builderGenre = document.querySelector("[data-builder-genre]");
+  if (builderGenre) {
+    builderGenre.value = state.builderGenre;
+    builderGenre.addEventListener("change", (event) => {
+      state.builderGenre = event.target.value;
+      resetBuilderChoices();
+      renderDashboard();
+    });
+  }
+  const builderSort = document.querySelector("[data-builder-sort]");
+  if (builderSort) {
+    builderSort.value = state.builderSort;
+    builderSort.addEventListener("change", (event) => {
+      state.builderSort = event.target.value;
+      resetBuilderChoices();
+      renderDashboard();
+    });
+  }
+  const builderBpmTolerance = document.querySelector("[data-builder-bpm-tolerance]");
+  if (builderBpmTolerance) {
+    builderBpmTolerance.value = String(state.builderBpmTolerance);
+    builderBpmTolerance.addEventListener("change", (event) => {
+      state.builderBpmTolerance = Math.max(0, Number(event.target.value) || 0);
+      resetBuilderChoices();
+      renderDashboard();
+    });
+  }
+  document.querySelectorAll("[data-builder-open-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.builderActiveIndex = Number(button.dataset.builderOpenIndex) || 0;
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-builder-select-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.builderSelectIndex) || 0;
+      state.builderPath = [...state.builderPath.slice(0, index + 1), button.dataset.builderSelectKey];
+      state.builderActiveIndex = index + 1;
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-builder-load-more]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.builderLoadMore) || 0;
+      const contextId = builderContextId(index);
+      state.builderVisibleCounts.set(contextId, builderVisibleCount(index) + 5);
+      state.builderActiveIndex = index;
+      renderDashboard();
+    });
+  });
 
   const newSessionList = document.querySelector(".session-list");
   if (newSessionList) {
@@ -921,6 +1146,7 @@ function renderActiveView(sessions, selected) {
   if (state.activeView === "stats") return renderStatsView();
   if (state.activeView === "tracks") return renderTracksView();
   if (state.activeView === "paths") return renderPathsView();
+  if (state.activeView === "builder") return renderSetBuilderView();
   return renderSetsView(sessions, selected);
 }
 
@@ -957,6 +1183,164 @@ function renderTracksView() {
         </div>
       </section>
     </main>
+  `;
+}
+
+function renderSetBuilderView() {
+  const model = buildTransitionModel(state.data);
+  const roots = builderRootOptions(model);
+  const genres = genreOptions(state.data);
+
+  if (!state.builderPath.length && roots[0]) {
+    state.builderPath = [roots[0].key];
+    state.builderRootInput = roots[0].label;
+    state.builderActiveIndex = 0;
+  }
+
+  const currentRoot = model.trackMap.get(state.builderPath[0]);
+  const inputValue = state.builderRootInput || (currentRoot ? trackDisplayLabel(currentRoot) : "");
+
+  return `
+    <main class="view-page builder-view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">Set Builder</p>
+          <h2>Folder Builder</h2>
+        </div>
+        <div class="view-actions">
+          <span>${state.builderPath.length} ${state.builderPath.length === 1 ? "song" : "songs"}</span>
+        </div>
+      </header>
+      <section class="builder-controls">
+        <form data-builder-root-form>
+          <label for="builder-root">Start song</label>
+          <input
+            id="builder-root"
+            data-builder-root-input
+            list="builder-root-options"
+            placeholder="Type a song title"
+            value="${escapeHtml(inputValue)}"
+          />
+          <datalist id="builder-root-options">
+            ${roots.slice(0, 300).map((option) => `<option value="${escapeHtml(option.label)}"></option>`).join("")}
+          </datalist>
+          <button type="submit">Start set</button>
+        </form>
+        <div class="builder-filter-row">
+          <label>
+            <span>Genre</span>
+            <select data-builder-genre>
+              <option value="all">All genres</option>
+              ${genres
+                .map(
+                  ({ genre, count }) =>
+                    `<option value="${escapeHtml(genre)}">${escapeHtml(genre)} (${count.toLocaleString()})</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <select data-builder-sort>
+              <option value="popularity">Historical popularity</option>
+              <option value="harmonic">Harmonic similarity</option>
+            </select>
+          </label>
+          <label>
+            <span>BPM +/-</span>
+            <input data-builder-bpm-tolerance type="number" min="0" max="80" step="1" value="${escapeHtml(state.builderBpmTolerance)}" />
+          </label>
+        </div>
+        <div class="path-suggestions">
+          ${roots
+            .slice(0, 6)
+            .map(
+              (option) => `
+                <button data-builder-root-key="${escapeHtml(option.key)}" type="button">
+                  ${escapeHtml(option.label)}
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+      <section class="builder-file-list">
+        ${
+          state.builderPath.length
+            ? state.builderPath.map((key, index) => renderBuilderSong(key, model, index)).join("")
+            : `<p class="empty">Choose a starting song to begin building a set.</p>`
+        }
+      </section>
+    </main>
+  `;
+}
+
+function renderBuilderSong(key, model, index) {
+  const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
+  const isActive = index === state.builderActiveIndex;
+  const candidates = builderCandidatesFor(key, model, index);
+  const visibleCount = builderVisibleCount(index);
+  const visibleCandidates = candidates.slice(0, visibleCount);
+  const cover = track.artUrl
+    ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
+    : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
+
+  return `
+    <div class="builder-folder">
+      <div class="builder-row builder-song${isActive ? " is-active" : ""}">
+        <button class="folder-toggle" data-builder-open-index="${index}" type="button">${isActive ? "v" : ">"}</button>
+        <div class="small-cover">${cover}</div>
+        <div class="builder-main">
+          <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
+          <span>${escapeHtml(trackSecondary(track))}</span>
+        </div>
+        ${renderKeyBadge(track)}
+        <em>${track.bpm ? `${track.bpm.toFixed(1)} BPM` : ""}</em>
+      </div>
+      ${
+        isActive
+          ? `
+            <div class="builder-candidates">
+              ${
+                visibleCandidates.length
+                  ? visibleCandidates.map((candidate) => renderBuilderCandidate(candidate, index)).join("")
+                  : `<p class="empty compact">No matches for the current genre and BPM range.</p>`
+              }
+              ${
+                visibleCount < candidates.length
+                  ? `<button class="builder-load-more" data-builder-load-more="${index}" type="button">Load more</button>`
+                  : ""
+              }
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderBuilderCandidate(candidate, index) {
+  const track = candidate.track;
+  const secondary = trackSecondary(track);
+  const cover = track.artUrl
+    ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
+    : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
+  const bpmText = Number.isFinite(candidate.bpmDelta) ? `+/- ${candidate.bpmDelta.toFixed(1)} BPM` : "No BPM";
+  const harmonicText = candidate.harmonicDistance >= 99 ? "No key" : `Key ${candidate.harmonicDistance.toFixed(1)}`;
+
+  return `
+    <button class="builder-row builder-candidate" data-builder-select-key="${escapeHtml(candidate.key)}" data-builder-select-index="${index}" type="button">
+      <span class="folder-branch" aria-hidden="true"></span>
+      <div class="small-cover">${cover}</div>
+      <div class="builder-main">
+        <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
+        ${secondary ? `<span>${escapeHtml(secondary)}</span>` : ""}
+      </div>
+      ${renderKeyBadge(track)}
+      <em>${candidate.transitionCount ? `${candidate.transitionCount}x` : "Library"}</em>
+      <em>${escapeHtml(bpmText)}</em>
+      <em>${escapeHtml(harmonicText)}</em>
+    </button>
   `;
 }
 
