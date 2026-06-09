@@ -2,60 +2,6 @@
 
 Turn your Rekordbox play history into a clean desktop dashboard for sets, stats, and tracks.
 
-## Download And Run
-
-**Download the latest app here:** <https://github.com/axel-slid/rekordbox-history-viewer/releases/tag/v0.1.3>
-
-Pick the file for your computer, unzip it if needed, then open the app. The first launch can take a few minutes because the app prepares a local Python reader and resolves Spotify track names into a local cache.
-
-### Mac
-
-1. Open the download link above.
-2. Download `Rekordbox-History-Viewer-0.1.3-mac-apple-silicon.zip`.
-3. Double-click the zip file. This creates the app.
-4. Double-click `Rekordbox History Viewer`.
-5. If macOS blocks it, right-click `Rekordbox History Viewer`, choose **Open**, then choose **Open** again.
-6. If macOS says the app is damaged, open Terminal and run `xattr -dr com.apple.quarantine ~/Downloads/Rekordbox\ History\ Viewer.app`.
-7. Leave the app open on first launch while it prepares the Rekordbox reader.
-
-### Windows
-
-1. Open the download link above.
-2. Download `Rekordbox-History-Viewer-0.1.3-windows.zip`.
-3. Right-click the zip file and choose **Extract All**.
-4. Open the extracted folder.
-5. Double-click `Rekordbox History Viewer.exe`.
-6. If Windows SmartScreen warns you, choose **More info**, then **Run anyway**.
-7. Leave the app open on first launch while it prepares the Rekordbox reader.
-
-### Linux
-
-1. Open the download link above.
-2. Download `Rekordbox-History-Viewer-0.1.3-linux.AppImage`.
-3. Right-click the file, open **Properties**, and allow it to run as a program.
-4. Double-click the AppImage.
-5. Leave the app open on first launch while it prepares the Rekordbox reader.
-
-### What You Need Installed
-
-- Rekordbox, with existing played-track history.
-- Python 3. The app uses it locally to read Rekordbox's database.
-- Internet access on first launch, so the app can install its local Rekordbox database reader.
-
-Your library stays on your computer. The app reads your local Rekordbox database and does not upload your play history.
-
-## If The App Download Does Not Work
-
-Use the source-code fallback on macOS:
-
-1. Click the green **Code** button on GitHub.
-2. Click **Download ZIP**.
-3. Unzip the folder.
-4. Double-click `open_rekordbox_history.command`.
-5. If macOS blocks it, right-click the file, choose **Open**, then choose **Open** again.
-
-That launcher installs the app dependencies, prepares the Python Rekordbox reader, builds the app, and opens it.
-
 ![Stats view](docs/screenshots/stats.png)
 
 ## What It Shows
