@@ -4,14 +4,14 @@ Turn your Rekordbox play history into a clean desktop dashboard for sets, stats,
 
 ## Download And Run
 
-**Download the latest app here:** <https://github.com/axel-slid/rekordbox-history-viewer/releases/tag/v0.1.2>
+**Download the latest app here:** <https://github.com/axel-slid/rekordbox-history-viewer/releases/tag/v0.1.3>
 
-Pick the file for your computer, unzip it if needed, then open the app. The first launch can take a minute because the app prepares a local Python reader for your Rekordbox database.
+Pick the file for your computer, unzip it if needed, then open the app. The first launch can take a few minutes because the app prepares a local Python reader and resolves Spotify track names into a local cache.
 
 ### Mac
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.2-arm64-mac.zip`.
+2. Download `Rekordbox.History.Viewer-0.1.3-arm64-mac.zip`.
 3. Double-click the zip file. This creates the app.
 4. Double-click `Rekordbox History Viewer`.
 5. If macOS blocks it, right-click `Rekordbox History Viewer`, choose **Open**, then choose **Open** again.
@@ -20,7 +20,7 @@ Pick the file for your computer, unzip it if needed, then open the app. The firs
 ### Windows
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.2-win.zip`.
+2. Download `Rekordbox.History.Viewer-0.1.3-win.zip`.
 3. Right-click the zip file and choose **Extract All**.
 4. Open the extracted folder.
 5. Double-click `Rekordbox History Viewer.exe`.
@@ -29,7 +29,7 @@ Pick the file for your computer, unzip it if needed, then open the app. The firs
 ### Linux
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.2.AppImage`.
+2. Download `Rekordbox.History.Viewer-0.1.3.AppImage`.
 3. Right-click the file, open **Properties**, and allow it to run as a program.
 4. Double-click the AppImage.
 5. Leave the app open on first launch while it prepares the Rekordbox reader.
@@ -60,8 +60,8 @@ That launcher installs the app dependencies, prepares the Python Rekordbox reade
 
 - **Sets:** dated sessions like `June 7th, 2026 Set`, with the tracks played in order.
 - **Stats:** a GitHub-style activity heatmap, genre donut, total play time, average time per day, busiest day, top source, average BPM, and repeated tracks.
-- **Tracks:** a searchable track library with unique tracks, play counts, last played time, BPM, length, source, and sorting.
-- **Paths:** start from a song, expand historical next-track branches one level at a time, and copy any path from the root song.
+- **Tracks:** a searchable track library with unique tracks, play counts, last played time, Camelot-style key badges, BPM, length, source, and sorting.
+- **Paths:** start from a song, expand a rightward branching tree of historical next-track choices, see color-coded Camelot keys, and copy any path from the root song.
 - **Exports:** download a setlist or generate a text prompt for manually recreating a set.
 
 ## Screenshots
@@ -124,7 +124,7 @@ The renderer groups the raw played rows into:
 - genre summaries
 - repeated-track rankings
 
-Spotify metadata is cached locally in `data/spotify-track-cache.json`, which is ignored by git so personal lookup data does not get committed.
+Spotify metadata is cached locally in the app's user-data folder so personal lookup data does not get committed or uploaded.
 
 ## What It Cannot Do Yet
 

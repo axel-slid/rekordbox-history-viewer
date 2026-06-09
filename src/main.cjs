@@ -124,7 +124,8 @@ async function readRekordboxHistory({ force = false } = {}) {
         ...process.env,
         PYTHONUNBUFFERED: "1",
         REKORDBOX_HISTORY_HOME: os.homedir(),
-        REKORDBOX_HISTORY_SKIP_SPOTIFY_LOOKUP: force ? "0" : "1"
+        REKORDBOX_HISTORY_CACHE_PATH: path.join(app.getPath("userData"), "spotify-track-cache.json"),
+        REKORDBOX_HISTORY_SKIP_SPOTIFY_LOOKUP: "0"
       }
     });
 
