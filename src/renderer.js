@@ -23,7 +23,8 @@ const state = {
   builderGenre: "all",
   builderSort: "popularity",
   builderBpmTolerance: 8,
-  builderVisibleCounts: new Map()
+  builderVisibleCounts: new Map(),
+  builderCopiedSetPath: ""
 };
 
 function escapeHtml(value) {
@@ -136,6 +137,12 @@ function trackSecondary(track) {
 function trackDisplayLabel(track) {
   const secondary = cleanSecondaryText(track.displayArtist) || cleanSecondaryText(track.album);
   return secondary ? `${track.displayTitle} - ${secondary}` : track.displayTitle;
+}
+
+function setlistTrackLabel(track) {
+  const title = track.displayTitle || track.title || "Unknown track";
+  const artist = cleanSecondaryText(track.displayArtist);
+  return artist ? `${title} - ${artist}` : title;
 }
 
 const CAMELOT_BY_STANDARD_KEY = new Map(
@@ -1090,6 +1097,15 @@ function renderDashboard() {
       renderDashboard();
     });
   }
+  const copyBuilderSet = document.querySelector("[data-copy-builder-set]");
+  if (copyBuilderSet) {
+    copyBuilderSet.addEventListener("click", async () => {
+      const model = buildTransitionModel(state.data);
+      await copyText(formatBuilderSetlist(model));
+      state.builderCopiedSetPath = transitionPathId(state.builderPath);
+      renderDashboard();
+    });
+  }
   document.querySelectorAll("[data-builder-open-index]").forEach((button) => {
     button.addEventListener("click", () => {
       state.builderActiveIndex = Number(button.dataset.builderOpenIndex) || 0;
@@ -1191,6 +1207,7 @@ function renderSetBuilderView() {
 
   const currentRoot = model.trackMap.get(state.builderPath[0]);
   const inputValue = state.builderRootInput || (currentRoot ? trackDisplayLabel(currentRoot) : "");
+  const builderPathId = transitionPathId(state.builderPath);
 
   return `
     <main class="view-page builder-view">
@@ -1200,7 +1217,9 @@ function renderSetBuilderView() {
           <h2>Folder Builder</h2>
         </div>
         <div class="view-actions">
+          ${state.builderCopiedSetPath === builderPathId ? `<span>Copied</span>` : ""}
           <span>${state.builderPath.length} ${state.builderPath.length === 1 ? "song" : "songs"}</span>
+          <button data-copy-builder-set type="button">Copy Set</button>
         </div>
       </header>
       <section class="builder-controls">
@@ -1611,9 +1630,16 @@ function formatTimedSetlist(session) {
     .map((track, index) => {
       const playedTime = new Date(track.playedAt).getTime();
       const relative = index === 0 || !Number.isFinite(playedTime) || !baseTime ? 0 : playedTime - baseTime;
-      const artist = cleanSecondaryText(track.displayArtist);
-      const label = artist ? `${track.displayTitle} - ${artist}` : track.displayTitle;
-      return `${fmtRelativeTimestamp(relative)} ${label}`;
+      return `${fmtRelativeTimestamp(relative)} ${setlistTrackLabel(track)}`;
+    })
+    .join("\n");
+}
+
+function formatBuilderSetlist(model) {
+  return state.builderPath
+    .map((key, index) => {
+      const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
+      return `${index + 1}. ${setlistTrackLabel(track)}`;
     })
     .join("\n");
 }
