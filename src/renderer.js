@@ -9,6 +9,7 @@ const state = {
   query: "",
   source: "all",
   mixNoticeSessionId: null,
+  copiedSetSessionId: null,
   topTracksLimit: 5,
   trackSort: "recent-desc",
   sessionListScrollTop: 0,
@@ -962,6 +963,15 @@ function renderDashboard() {
       if (session) downloadSetlist(session);
     });
   });
+  document.querySelectorAll("[data-copy-set-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const session = state.data.sessions.find((item) => item.id === button.dataset.copySetId);
+      if (!session) return;
+      await copyText(formatTimedSetlist(session));
+      state.copiedSetSessionId = session.id;
+      renderDashboard();
+    });
+  });
   document.querySelectorAll("[data-load-more-top-tracks]").forEach((button) => {
     button.addEventListener("click", () => {
       state.topTracksLimit *= 2;
@@ -1490,11 +1500,16 @@ function renderSessionButton(session) {
   const active = session.id === state.selectedSessionId ? " is-active" : "";
   const first = session.tracks[0];
   return `
-    <button class="session-button${active}" data-session-id="${escapeHtml(session.id)}" type="button">
-      <span class="session-name">${escapeHtml(displaySetName(session))}</span>
-      <span class="session-meta">${escapeHtml(fmtDate(session.startedAt))} · ${session.trackCount} tracks</span>
-      <span class="session-preview">${escapeHtml(first ? first.displayTitle : "Empty session")}</span>
-    </button>
+    <div class="session-row">
+      <button class="session-button${active}" data-session-id="${escapeHtml(session.id)}" type="button">
+        <span class="session-name">${escapeHtml(displaySetName(session))}</span>
+        <span class="session-meta">${escapeHtml(fmtDate(session.startedAt))} · ${session.trackCount} tracks</span>
+        <span class="session-preview">${escapeHtml(first ? first.displayTitle : "Empty session")}</span>
+      </button>
+      <button class="session-copy" data-copy-set-id="${escapeHtml(session.id)}" type="button">
+        ${state.copiedSetSessionId === session.id ? "Copied" : "Copy Set"}
+      </button>
+    </div>
   `;
 }
 
@@ -1510,6 +1525,8 @@ function renderSession(session) {
       </div>
       <div class="panel-actions">
         <span class="panel-count">${tracks.length} / ${session.trackCount} tracks</span>
+        ${state.copiedSetSessionId === session.id ? `<span class="panel-count">Copied</span>` : ""}
+        <button data-copy-set-id="${escapeHtml(session.id)}" type="button">Copy Set</button>
         <button data-download-setlist-id="${escapeHtml(session.id)}" type="button">Download setlist</button>
         <button data-recreate-session-id="${escapeHtml(session.id)}" type="button">Recreate mix</button>
       </div>
@@ -1616,6 +1633,33 @@ function downloadSetlist(session) {
   anchor.download = `${session.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "setlist"}.txt`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function fmtRelativeTimestamp(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatTimedSetlist(session) {
+  const tracks = [...session.tracks].sort((a, b) => (a.trackNo || 0) - (b.trackNo || 0));
+  const firstTime = new Date(tracks[0]?.playedAt).getTime();
+  const baseTime = Number.isFinite(firstTime) ? firstTime : 0;
+
+  return tracks
+    .map((track, index) => {
+      const playedTime = new Date(track.playedAt).getTime();
+      const relative = index === 0 || !Number.isFinite(playedTime) || !baseTime ? 0 : playedTime - baseTime;
+      const artist = cleanSecondaryText(track.displayArtist);
+      const label = artist ? `${track.displayTitle} - ${artist}` : track.displayTitle;
+      return `${fmtRelativeTimestamp(relative)} ${label}`;
+    })
+    .join("\n");
 }
 
 async function copyText(text) {

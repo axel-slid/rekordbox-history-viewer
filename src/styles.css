@@ -1003,6 +1003,13 @@ select:focus {
   background: var(--surface);
 }
 
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
 .session-button {
   display: grid;
   width: 100%;
@@ -1017,6 +1024,10 @@ select:focus {
   box-shadow: none;
 }
 
+.session-row .session-button {
+  border-bottom: 0;
+}
+
 .session-button:hover,
 .session-button:focus-visible {
   background: transparent;
@@ -1026,6 +1037,13 @@ select:focus {
 .session-button.is-active {
   background: transparent;
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.session-copy {
+  align-self: center;
+  margin-right: 14px;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 .session-name {
