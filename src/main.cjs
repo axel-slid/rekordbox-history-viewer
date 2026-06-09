@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require("electron");
+const { app, BrowserWindow, clipboard, ipcMain, session } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const os = require("node:os");
@@ -206,6 +206,10 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("rekordbox-history:get", (_event, options = {}) => readRekordboxHistory(options));
+  ipcMain.handle("clipboard:write", (_event, text) => {
+    clipboard.writeText(String(text || ""));
+    return true;
+  });
 
   createWindow();
 

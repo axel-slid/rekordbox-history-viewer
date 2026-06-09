@@ -11,7 +11,12 @@ const state = {
   mixNoticeSessionId: null,
   topTracksLimit: 5,
   trackSort: "recent-desc",
-  sessionListScrollTop: 0
+  sessionListScrollTop: 0,
+  transitionRootKey: "",
+  transitionRootInput: "",
+  transitionDepth: 0,
+  transitionBranchLimit: 8,
+  transitionCopiedPath: ""
 };
 
 function escapeHtml(value) {
@@ -107,6 +112,7 @@ function cleanSecondaryText(value) {
   if (!cleaned) return "";
   if (/^spotify:/i.test(cleaned) || /^artist:/i.test(cleaned) || /^rtist:/i.test(cleaned)) return "";
   if (cleaned.toLowerCase() === "spotify") return "";
+  if (cleaned.startsWith("/") || /\.(aiff?|flac|m4a|mp3|wav)$/i.test(cleaned)) return "";
   if (/^[A-Za-z0-9]{16,}#?$/.test(cleaned)) return "";
   return cleaned;
 }
@@ -118,6 +124,11 @@ function trackSecondary(track) {
   if (album) return album;
   if (track.source === "Spotify") return "";
   return cleanSecondaryText(track.path) || track.source || "No artist metadata";
+}
+
+function trackDisplayLabel(track) {
+  const secondary = cleanSecondaryText(track.displayArtist) || cleanSecondaryText(track.album);
+  return secondary ? `${track.displayTitle} - ${secondary}` : track.displayTitle;
 }
 
 function canonicalTrackKey(track) {
@@ -241,6 +252,81 @@ function setMixReadiness(session) {
     spotifyTracks,
     canRenderApproximation: localTracks.length === session.tracks.length && localTracks.length > 1
   };
+}
+
+function buildTransitionModel(data) {
+  const tracks = uniqueTracks(data.tracks);
+  const trackMap = new Map();
+  const graph = new Map();
+
+  for (const track of tracks) {
+    trackMap.set(canonicalTrackKey(track), track);
+  }
+
+  for (const session of data.sessions) {
+    for (let index = 0; index < session.tracks.length - 1; index += 1) {
+      const from = session.tracks[index];
+      const to = session.tracks[index + 1];
+      const fromKey = canonicalTrackKey(from);
+      const toKey = canonicalTrackKey(to);
+      if (!fromKey || !toKey || fromKey === "||||||" || toKey === "||||||") continue;
+
+      if (!trackMap.has(fromKey)) trackMap.set(fromKey, from);
+      if (!trackMap.has(toKey)) trackMap.set(toKey, to);
+
+      const children = graph.get(fromKey) || new Map();
+      const existing = children.get(toKey) || {
+        key: toKey,
+        count: 0,
+        examples: []
+      };
+      existing.count += 1;
+      if (existing.examples.length < 3) {
+        existing.examples.push({
+          setName: displaySetName(session),
+          playedAt: to.playedAt
+        });
+      }
+      children.set(toKey, existing);
+      graph.set(fromKey, children);
+    }
+  }
+
+  return { trackMap, graph };
+}
+
+function transitionChildrenFor(key, model) {
+  return Array.from(model.graph.get(key)?.values() || [])
+    .sort((a, b) => b.count - a.count || compareTrackTitle(model.trackMap.get(a.key), model.trackMap.get(b.key)))
+    .slice(0, state.transitionBranchLimit);
+}
+
+function transitionRootOptions(model) {
+  return Array.from(model.trackMap.entries())
+    .filter(([key]) => model.graph.has(key))
+    .map(([key, track]) => ({
+      key,
+      label: trackDisplayLabel(track),
+      playCount: track.playCount || 0
+    }))
+    .sort((a, b) => b.playCount - a.playCount || a.label.localeCompare(b.label));
+}
+
+function resolveTransitionRoot(model) {
+  if (state.transitionRootKey && model.trackMap.has(state.transitionRootKey)) {
+    return state.transitionRootKey;
+  }
+  const options = transitionRootOptions(model);
+  return options[0]?.key || "";
+}
+
+function transitionPathText(path, model) {
+  return path
+    .map((key, index) => {
+      const label = trackDisplayLabel(model.trackMap.get(key) || { displayTitle: "Unknown track" });
+      return `${index + 1}. ${label}`;
+    })
+    .join("\n");
 }
 
 function buildStats(data) {
@@ -550,6 +636,7 @@ function renderShell() {
           <button data-view="sets" type="button">Sets</button>
           <button data-view="stats" type="button">Stats</button>
           <button data-view="tracks" type="button">Tracks</button>
+          <button data-view="paths" type="button">Paths</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -667,6 +754,62 @@ function renderDashboard() {
       renderDashboard();
     });
   });
+  const transitionRootInput = document.querySelector("[data-transition-root-input]");
+  if (transitionRootInput) {
+    transitionRootInput.addEventListener("input", (event) => {
+      state.transitionRootInput = event.target.value;
+    });
+  }
+  const transitionRootForm = document.querySelector("[data-transition-root-form]");
+  if (transitionRootForm) {
+    transitionRootForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const model = buildTransitionModel(state.data);
+      const options = transitionRootOptions(model);
+      const typed = normalizeText(state.transitionRootInput);
+      const selected =
+        options.find((option) => normalizeText(option.label) === typed) ||
+        options.find((option) => normalizeText(option.label).includes(typed));
+      if (selected) {
+        state.transitionRootKey = selected.key;
+        state.transitionRootInput = selected.label;
+        state.transitionDepth = 0;
+        state.transitionCopiedPath = "";
+        renderDashboard();
+      }
+    });
+  }
+  document.querySelectorAll("[data-transition-root-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.transitionRootKey = button.dataset.transitionRootKey;
+      const model = buildTransitionModel(state.data);
+      const track = model.trackMap.get(state.transitionRootKey);
+      state.transitionRootInput = track ? trackDisplayLabel(track) : "";
+      state.transitionDepth = 0;
+      state.transitionCopiedPath = "";
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-transition-depth]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const delta = Number(button.dataset.transitionDepth);
+      state.transitionDepth = Math.max(0, state.transitionDepth + delta);
+      state.transitionCopiedPath = "";
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-copy-transition-path]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const path = button.dataset.copyTransitionPath || "";
+      try {
+        await copyText(path);
+        state.transitionCopiedPath = path;
+      } catch {
+        state.transitionCopiedPath = "Copy failed";
+      }
+      renderDashboard();
+    });
+  });
 
   const newSessionList = document.querySelector(".session-list");
   if (newSessionList) {
@@ -691,6 +834,7 @@ function renderSummary() {
 function renderActiveView(sessions, selected) {
   if (state.activeView === "stats") return renderStatsView();
   if (state.activeView === "tracks") return renderTracksView();
+  if (state.activeView === "paths") return renderPathsView();
   return renderSetsView(sessions, selected);
 }
 
@@ -727,6 +871,119 @@ function renderTracksView() {
         </div>
       </section>
     </main>
+  `;
+}
+
+function renderPathsView() {
+  const model = buildTransitionModel(state.data);
+  const options = transitionRootOptions(model);
+  const rootKey = resolveTransitionRoot(model);
+  const rootTrack = model.trackMap.get(rootKey);
+  if (rootKey && !state.transitionRootKey) {
+    state.transitionRootKey = rootKey;
+    state.transitionRootInput = rootTrack ? trackDisplayLabel(rootTrack) : "";
+  }
+  const rootLabel = rootTrack ? trackDisplayLabel(rootTrack) : "";
+  const inputValue = state.transitionRootInput || rootLabel;
+
+  return `
+    <main class="view-page paths-view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">Paths</p>
+          <h2>Transition Tree</h2>
+        </div>
+        <div class="view-actions">
+          <span>${state.transitionDepth} ${state.transitionDepth === 1 ? "level" : "levels"}</span>
+          <button data-transition-depth="-1" type="button">Remove depth</button>
+          <button data-transition-depth="1" type="button">Add depth</button>
+        </div>
+      </header>
+      <section class="path-controls">
+        <form data-transition-root-form>
+          <label for="transition-root">Start song</label>
+          <input
+            id="transition-root"
+            data-transition-root-input
+            list="transition-root-options"
+            placeholder="Type a song title"
+            value="${escapeHtml(inputValue)}"
+          />
+          <datalist id="transition-root-options">
+            ${options.slice(0, 250).map((option) => `<option value="${escapeHtml(option.label)}"></option>`).join("")}
+          </datalist>
+          <button type="submit">Start tree</button>
+        </form>
+        <div class="path-suggestions">
+          ${options
+            .slice(0, 6)
+            .map(
+              (option) => `
+                <button data-transition-root-key="${escapeHtml(option.key)}" type="button">
+                  ${escapeHtml(option.label)}
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+      <section class="path-workspace">
+        ${
+          rootKey
+            ? renderTransitionNode(rootKey, model, state.transitionDepth, [rootKey], 0)
+            : `<p class="empty">No transition data found. This needs at least two tracks in a set.</p>`
+        }
+      </section>
+      ${
+        state.transitionCopiedPath
+          ? `<section class="path-copied"><strong>Copied path</strong><pre>${escapeHtml(state.transitionCopiedPath)}</pre></section>`
+          : ""
+      }
+    </main>
+  `;
+}
+
+function renderTransitionNode(key, model, depthRemaining, path, index = 0, transitionCount = 0) {
+  const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
+  const children = transitionChildrenFor(key, model);
+  const pathText = transitionPathText(path, model);
+  const cover = track.artUrl
+    ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
+    : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
+  return `
+    <div class="path-node animated-row" style="--row-delay: ${Math.min(index, 24) * 24}ms">
+      <div class="path-node-line">
+        <div class="small-cover">${cover}</div>
+        <div class="path-node-main">
+          <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
+          <span>${escapeHtml(trackSecondary(track))}</span>
+        </div>
+        <em>${transitionCount ? `${transitionCount}x` : "Root"}</em>
+        <button data-copy-transition-path="${escapeHtml(pathText)}" type="button">Copy path</button>
+      </div>
+      ${
+        depthRemaining > 0 && children.length
+          ? `
+            <div class="path-children">
+              ${children
+                .map((child, childIndex) =>
+                  renderTransitionNode(
+                    child.key,
+                    model,
+                    depthRemaining - 1,
+                    [...path, child.key],
+                    childIndex,
+                    child.count
+                  )
+                )
+                .join("")}
+            </div>
+          `
+          : depthRemaining > 0
+            ? `<p class="path-end">No historical next track from here.</p>`
+            : ""
+      }
+    </div>
   `;
 }
 
@@ -877,6 +1134,26 @@ function downloadSetlist(session) {
   anchor.download = `${session.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "setlist"}.txt`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+async function copyText(text) {
+  if (window.rekordboxHistory?.copyText) {
+    await window.rekordboxHistory.copyText(text);
+    return;
+  }
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 async function loadHistory(force = false) {

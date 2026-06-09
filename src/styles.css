@@ -632,6 +632,133 @@ select:focus {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.paths-view {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 18px;
+}
+
+.path-controls {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.path-controls form {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 480px) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.path-controls label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.path-controls input {
+  width: 100%;
+}
+
+.path-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.path-suggestions button {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-workspace {
+  min-width: 0;
+  overflow: auto;
+  padding: 2px 0 28px;
+}
+
+.path-node {
+  min-width: 300px;
+}
+
+.path-node-line {
+  display: grid;
+  grid-template-columns: 34px minmax(180px, 360px) 52px auto;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  min-width: min(100%, 560px);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.path-node-main {
+  min-width: 0;
+}
+
+.path-node-main strong,
+.path-node-main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-node-main strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.path-node-main span,
+.path-node-line em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.path-children {
+  display: grid;
+  gap: 0;
+  margin-left: 30px;
+  padding-left: 22px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.path-end {
+  margin: 6px 0 10px 52px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.path-copied {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.path-copied strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.path-copied pre {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  color: var(--muted);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
 .sets-layout {
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
@@ -978,7 +1105,8 @@ td:nth-child(7) {
 
   .view-header,
   .panel-header,
-  .mix-notice {
+  .mix-notice,
+  .path-controls form {
     align-items: stretch;
     grid-template-columns: 1fr;
     flex-direction: column;

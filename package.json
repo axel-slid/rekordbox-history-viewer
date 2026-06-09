@@ -1,6 +1,6 @@
 {
   "name": "rekordbox-history-viewer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Electron viewer for Rekordbox played-track history.",
   "author": "Alex Dils",
   "repository": {
