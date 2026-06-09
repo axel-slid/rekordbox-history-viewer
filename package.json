@@ -27,6 +27,7 @@
     },
     "files": [
       "dist/**/*",
+      "data/**/*",
       "src/main.cjs",
       "src/preload.cjs",
       "scripts/extract_rekordbox_history.py",

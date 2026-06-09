@@ -686,7 +686,7 @@ select:focus {
 
 .transition-tree {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: max-content;
   padding: 6px 24px 30px;
 }
@@ -694,7 +694,7 @@ select:focus {
 .tree-node {
   position: relative;
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   min-width: 206px;
 }
@@ -761,27 +761,30 @@ select:focus {
 .tree-children {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   gap: 18px;
-  padding-top: 42px;
+  margin-left: 50px;
+  padding: 14px 0 14px 34px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.tree-node.is-expanded > .tree-card::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -50px;
+  width: 50px;
+  height: 1px;
+  background: var(--line-strong);
 }
 
 .tree-children::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: 50%;
-  width: 1px;
-  height: 24px;
-  background: var(--line-strong);
-}
-
-.tree-children::after {
-  content: "";
-  position: absolute;
-  top: 24px;
-  left: 125px;
-  right: 125px;
+  top: 50%;
+  left: -50px;
+  width: 50px;
   height: 1px;
   background: var(--line-strong);
 }
@@ -789,10 +792,10 @@ select:focus {
 .tree-children > .tree-node::before {
   content: "";
   position: absolute;
-  top: -18px;
-  left: 50%;
-  width: 1px;
-  height: 18px;
+  top: 50%;
+  left: -34px;
+  width: 34px;
+  height: 1px;
   background: var(--line-strong);
 }
 

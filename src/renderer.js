@@ -123,7 +123,7 @@ function trackSecondary(track) {
   const album = cleanSecondaryText(track.album);
   if (album) return album;
   if (track.source === "Spotify") return "";
-  return cleanSecondaryText(track.path) || track.source || "No artist metadata";
+  return cleanSecondaryText(track.path) || track.source || "";
 }
 
 function trackDisplayLabel(track) {
@@ -665,7 +665,6 @@ function renderStatsSection(data) {
           ${stat("Peak hour", peakHour)}
           ${stat("Top source", topSource)}
           ${stat("Avg BPM", stats.avgBpm ? stats.avgBpm.toFixed(1) : "Unknown")}
-          ${stat("Spotify names", `${data.summary.spotifyResolvedCount || 0}`, "resolved cache entries")}
         </div>
         <div class="top-tracks">
           <div class="top-tracks-head">
@@ -692,7 +691,7 @@ function renderTopTrack(track, index = 0) {
       <div class="small-cover">${cover}</div>
       <div>
         <strong>${escapeHtml(track.title)}</strong>
-        <span>${escapeHtml(track.artist || "No artist metadata")}</span>
+        ${track.artist ? `<span>${escapeHtml(track.artist)}</span>` : ""}
       </div>
       <em>${track.count}</em>
     </div>
@@ -1041,7 +1040,7 @@ function renderTransitionNode(key, model, path, index = 0, transitionCount = 0) 
     ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
     : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
   return `
-    <div class="tree-node animated-row" style="--row-delay: ${Math.min(index, 24) * 24}ms">
+    <div class="tree-node${isExpanded ? " is-expanded" : ""} animated-row" style="--row-delay: ${Math.min(index, 24) * 24}ms">
       <div class="tree-card">
         <div class="small-cover">${cover}</div>
         <div class="tree-card-main">

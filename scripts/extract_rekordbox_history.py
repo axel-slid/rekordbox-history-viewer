@@ -139,6 +139,10 @@ def display_title(content: Any, path_value: str, spotify_meta: dict[str, Any] | 
     return "Untitled track"
 
 
+def is_unresolved_spotify_title(title: str, path_value: str) -> bool:
+    return title == "Unresolved Spotify track" and bool(SPOTIFY_RE.match(path_value))
+
+
 def source_for(path_value: str, content: Any) -> str:
     if SPOTIFY_RE.match(path_value):
         return "Spotify"
@@ -560,6 +564,8 @@ def extract() -> dict[str, Any]:
                 spotify_id = match.group(1) if match else ""
                 spotify_meta = spotify_meta_by_id.get(spotify_id, {})
                 title = display_title(content, path_value, spotify_meta) if content else "Missing content"
+                if is_unresolved_spotify_title(title, path_value):
+                    continue
                 artist = (
                     text(getattr(content, "ArtistName", ""))
                     or text(getattr(content, "SrcArtistName", ""))
