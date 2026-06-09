@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+*.dmg
+*.zip
+.venv-rekordbox/
+.venv/
+data/spotify-track-cache.json
+data/*.tmp
+__pycache__/
+*.pyc
+.DS_Store
+npm-debug.log*
+visualizer-*.png
+flx10-codex-sandbox/
+open_packet
+vq_vae_interview_packet.*

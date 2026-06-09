@@ -1,0 +1,67 @@
+{
+  "name": "rekordbox-history-viewer",
+  "version": "0.1.0",
+  "description": "Electron viewer for Rekordbox played-track history.",
+  "author": "Alex Dils",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axel-slid/rekordbox-history-viewer.git"
+  },
+  "private": false,
+  "type": "module",
+  "main": "src/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "vite build",
+    "start": "electron .",
+    "setup:python": "python3 -m venv .venv-rekordbox && .venv-rekordbox/bin/python -m pip install --upgrade pip && .venv-rekordbox/bin/python -m pip install -r requirements.txt",
+    "package:mac": "npm run build && electron-builder --mac zip --publish never",
+    "dist": "npm run build && electron-builder --publish never"
+  },
+  "build": {
+    "appId": "com.axelslid.rekordbox-history-viewer",
+    "productName": "Rekordbox History Viewer",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main.cjs",
+      "src/preload.cjs",
+      "scripts/extract_rekordbox_history.py",
+      "requirements.txt",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "zip"
+      ],
+      "category": "Audio"
+    }
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.15.2",
+    "playwright": "^1.60.0",
+    "pngjs": "^7.0.0",
+    "vite": "^7.1.7",
+    "wait-on": "^8.0.5"
+  }
+}
