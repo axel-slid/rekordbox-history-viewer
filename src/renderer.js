@@ -14,7 +14,7 @@ const state = {
   sessionListScrollTop: 0,
   transitionRootKey: "",
   transitionRootInput: "",
-  transitionBranchLimit: 8,
+  transitionBranchLimit: 6,
   transitionCopiedPath: "",
   transitionExpandedPaths: new Set()
 };
@@ -129,6 +129,77 @@ function trackSecondary(track) {
 function trackDisplayLabel(track) {
   const secondary = cleanSecondaryText(track.displayArtist) || cleanSecondaryText(track.album);
   return secondary ? `${track.displayTitle} - ${secondary}` : track.displayTitle;
+}
+
+const CAMELOT_BY_STANDARD_KEY = new Map(
+  Object.entries({
+    "Abm": "1A",
+    "G#m": "1A",
+    "B": "1B",
+    "Ebm": "2A",
+    "D#m": "2A",
+    "F#": "2B",
+    "Gb": "2B",
+    "Bbm": "3A",
+    "A#m": "3A",
+    "Db": "3B",
+    "C#": "3B",
+    "Fm": "4A",
+    "Ab": "4B",
+    "G#": "4B",
+    "Cm": "5A",
+    "Eb": "5B",
+    "D#": "5B",
+    "Gm": "6A",
+    "Bb": "6B",
+    "A#": "6B",
+    "Dm": "7A",
+    "F": "7B",
+    "Am": "8A",
+    "C": "8B",
+    "Em": "9A",
+    "G": "9B",
+    "Bm": "10A",
+    "D": "10B",
+    "F#m": "11A",
+    "Gbm": "11A",
+    "A": "11B",
+    "Dbm": "12A",
+    "C#m": "12A",
+    "E": "12B"
+  })
+);
+
+function camelotKey(rawKey) {
+  const cleaned = String(rawKey || "").trim();
+  if (!cleaned || cleaned === "0") return "";
+  const camelot = cleaned.match(/^(\d{1,2})\s*([ab])$/i);
+  if (camelot) {
+    const number = Number(camelot[1]);
+    if (number >= 1 && number <= 12) return `${number}${camelot[2].toUpperCase()}`;
+  }
+  const normalized = cleaned
+    .replace(/minor/i, "m")
+    .replace(/major/i, "")
+    .replace(/\s+/g, "");
+  return CAMELOT_BY_STANDARD_KEY.get(normalized) || cleaned;
+}
+
+function keyHue(camelot) {
+  const match = String(camelot || "").match(/^(\d{1,2})([AB])$/);
+  if (!match) return 220;
+  return (Number(match[1]) - 1) * 30;
+}
+
+function renderKeyBadge(track) {
+  const key = camelotKey(track?.key);
+  if (!key) return "";
+  const mode = key.endsWith("A") ? "minor" : key.endsWith("B") ? "major" : "";
+  return `
+    <span class="key-badge" style="--key-hue: ${keyHue(key)}" title="${escapeHtml(mode ? `${key} ${mode}` : key)}">
+      ${escapeHtml(key)}
+    </span>
+  `;
 }
 
 function canonicalTrackKey(track) {
@@ -331,67 +402,6 @@ function transitionPathText(path, model) {
 
 function transitionPathId(path) {
   return path.map((key) => encodeURIComponent(key)).join("/");
-}
-
-function buildBpmFlow(data) {
-  const lanes = [
-    { label: "Slow burn", range: "60-89", min: 60, max: 89 },
-    { label: "Warmup", range: "90-104", min: 90, max: 104 },
-    { label: "Groove", range: "105-119", min: 105, max: 119 },
-    { label: "Club pace", range: "120-129", min: 120, max: 129 },
-    { label: "Peak time", range: "130-139", min: 130, max: 139 },
-    { label: "Fast lane", range: "140+", min: 140, max: Infinity }
-  ].map((lane) => ({ ...lane, tracks: [], count: 0, totalBpm: 0 }));
-
-  for (const track of uniqueTracks(data.tracks)) {
-    if (!Number.isFinite(track.bpm)) continue;
-    const lane = lanes.find((item) => track.bpm >= item.min && track.bpm <= item.max);
-    if (!lane) continue;
-    lane.tracks.push(track);
-    lane.count += track.playCount || 1;
-    lane.totalBpm += track.bpm;
-  }
-
-  return lanes.map((lane) => ({
-    ...lane,
-    totalTracks: lane.tracks.length,
-    avgBpm: lane.tracks.length ? lane.totalBpm / lane.tracks.length : 0,
-    tracks: lane.tracks
-      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0) || compareTrackTitle(a, b))
-      .slice(0, 5)
-  }));
-}
-
-function buildPrepData(data) {
-  const tracks = uniqueTracks(data.tracks);
-  const rows = tracks.map((track) => {
-    const missing = [];
-    if (!cleanSecondaryText(track.displayArtist)) missing.push("artist");
-    if (!cleanSecondaryText(track.genre)) missing.push("genre");
-    if (!Number.isFinite(track.bpm)) missing.push("BPM");
-    if (!Number.isFinite(track.lengthSeconds)) missing.push("length");
-    if (!track.artUrl) missing.push("art");
-    return {
-      ...track,
-      missing,
-      localReady: track.sourceLabel?.includes("Local file") || track.source === "Local file",
-      spotifyOnly: track.sourceLabel === "Spotify" || track.source === "Spotify"
-    };
-  });
-
-  const localReady = rows.filter((track) => track.localReady);
-  const spotifyOnly = rows.filter((track) => track.spotifyOnly && !track.localReady);
-  const needsMetadata = rows
-    .filter((track) => track.missing.length)
-    .sort((a, b) => b.missing.length - a.missing.length || (b.playCount || 0) - (a.playCount || 0));
-
-  return {
-    total: rows.length,
-    localReady,
-    spotifyOnly,
-    needsMetadata,
-    complete: rows.filter((track) => !track.missing.length)
-  };
 }
 
 function buildStats(data) {
@@ -702,8 +712,6 @@ function renderShell() {
           <button data-view="stats" type="button">Stats</button>
           <button data-view="tracks" type="button">Tracks</button>
           <button data-view="paths" type="button">Paths</button>
-          <button data-view="flow" type="button">Flow</button>
-          <button data-view="prep" type="button">Prep</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -914,8 +922,6 @@ function renderActiveView(sessions, selected) {
   if (state.activeView === "stats") return renderStatsView();
   if (state.activeView === "tracks") return renderTracksView();
   if (state.activeView === "paths") return renderPathsView();
-  if (state.activeView === "flow") return renderFlowView();
-  if (state.activeView === "prep") return renderPrepView();
   return renderSetsView(sessions, selected);
 }
 
@@ -1008,11 +1014,13 @@ function renderPathsView() {
         </div>
       </section>
       <section class="path-workspace">
-        ${
-          rootKey
-            ? renderTransitionNode(rootKey, model, [rootKey], 0)
-            : `<p class="empty">No transition data found. This needs at least two tracks in a set.</p>`
-        }
+        <div class="transition-tree">
+          ${
+            rootKey
+              ? renderTransitionNode(rootKey, model, [rootKey], 0)
+              : `<p class="empty">No transition data found. This needs at least two tracks in a set.</p>`
+          }
+        </div>
       </section>
       ${
         state.transitionCopiedPath
@@ -1033,25 +1041,30 @@ function renderTransitionNode(key, model, path, index = 0, transitionCount = 0) 
     ? `<img src="${escapeHtml(track.artUrl)}" alt="" loading="lazy" />`
     : `<span>${escapeHtml((track.displayTitle || "?").slice(0, 1).toUpperCase())}</span>`;
   return `
-    <div class="path-node animated-row" style="--row-delay: ${Math.min(index, 24) * 24}ms">
-      <div class="path-node-line">
+    <div class="tree-node animated-row" style="--row-delay: ${Math.min(index, 24) * 24}ms">
+      <div class="tree-card">
         <div class="small-cover">${cover}</div>
-        <div class="path-node-main">
+        <div class="tree-card-main">
           <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
           <span>${escapeHtml(trackSecondary(track))}</span>
+          <div class="tree-meta">
+            ${renderKeyBadge(track)}
+            <em>${transitionCount ? `${transitionCount}x` : "Root"}</em>
+          </div>
         </div>
-        <em>${transitionCount ? `${transitionCount}x` : "Root"}</em>
-        ${
-          children.length
-            ? `<button data-expand-transition-path="${escapeHtml(pathId)}" type="button">${isExpanded ? "Hide branch" : "Expand from here"}</button>`
-            : `<span class="path-terminal">End</span>`
-        }
-        <button data-copy-transition-path="${escapeHtml(pathText)}" type="button">Copy path</button>
+        <div class="tree-actions">
+          ${
+            children.length
+              ? `<button data-expand-transition-path="${escapeHtml(pathId)}" type="button">${isExpanded ? "Hide branch" : "Expand from here"}</button>`
+              : `<span class="path-terminal">End</span>`
+          }
+          <button data-copy-transition-path="${escapeHtml(pathText)}" type="button">Copy path</button>
+        </div>
       </div>
       ${
         isExpanded && children.length
           ? `
-            <div class="path-children">
+            <div class="tree-children">
               ${children
                 .map((child, childIndex) =>
                   renderTransitionNode(
@@ -1067,117 +1080,6 @@ function renderTransitionNode(key, model, path, index = 0, transitionCount = 0) 
           `
           : ""
       }
-    </div>
-  `;
-}
-
-function renderFlowView() {
-  const lanes = buildBpmFlow(state.data);
-  const max = Math.max(1, ...lanes.map((lane) => lane.count));
-
-  return `
-    <main class="view-page flow-view">
-      <header class="view-header">
-        <div>
-          <p class="eyebrow">Flow</p>
-          <h2>BPM Lanes</h2>
-        </div>
-        <div class="view-actions">
-          <span>${lanes.reduce((sum, lane) => sum + lane.totalTracks, 0).toLocaleString()} mapped tracks</span>
-        </div>
-      </header>
-      <section class="flow-board">
-        ${lanes.map((lane, index) => renderBpmLane(lane, max, index)).join("")}
-      </section>
-    </main>
-  `;
-}
-
-function renderBpmLane(lane, max, index) {
-  const width = Math.max(4, Math.round((lane.count / max) * 100));
-  return `
-    <section class="flow-lane animated-row" style="--row-delay: ${index * 36}ms">
-      <div class="flow-lane-head">
-        <div>
-          <p class="eyebrow">${escapeHtml(lane.range)} BPM</p>
-          <h3>${escapeHtml(lane.label)}</h3>
-        </div>
-        <span>${lane.count.toLocaleString()} plays${lane.avgBpm ? ` · ${lane.avgBpm.toFixed(1)} avg BPM` : ""}</span>
-      </div>
-      <div class="flow-meter" aria-hidden="true"><i style="width: ${width}%"></i></div>
-      <div class="flow-tracks">
-        ${
-          lane.tracks.length
-            ? lane.tracks.map((track) => renderCompactTrackLine(track)).join("")
-            : `<p class="empty compact">No tracks in this lane.</p>`
-        }
-      </div>
-    </section>
-  `;
-}
-
-function renderCompactTrackLine(track) {
-  return `
-    <div class="compact-track">
-      <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
-      <span>${escapeHtml(trackSecondary(track))}</span>
-      <em>${track.bpm ? track.bpm.toFixed(1) : ""}${track.playCount ? ` · ${track.playCount} plays` : ""}</em>
-    </div>
-  `;
-}
-
-function renderPrepView() {
-  const prep = buildPrepData(state.data);
-  return `
-    <main class="view-page prep-view">
-      <header class="view-header">
-        <div>
-          <p class="eyebrow">Prep</p>
-          <h2>Library Readiness</h2>
-        </div>
-        <div class="view-actions">
-          <span>${prep.total.toLocaleString()} unique tracks</span>
-        </div>
-      </header>
-      <section class="prep-summary">
-        ${stat("Local files", prep.localReady.length.toLocaleString(), "usable for offline set prep")}
-        ${stat("Spotify only", prep.spotifyOnly.length.toLocaleString(), "history only, no local audio")}
-        ${stat("Metadata gaps", prep.needsMetadata.length.toLocaleString(), "tracks missing DJ fields")}
-        ${stat("Complete rows", prep.complete.length.toLocaleString(), "artist, genre, BPM, length, art")}
-      </section>
-      <section class="prep-columns">
-        <section class="prep-column">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Cleanup</p>
-              <h2>Needs Metadata</h2>
-            </div>
-          </div>
-          ${prep.needsMetadata.slice(0, 12).map(renderPrepTrack).join("") || `<p class="empty compact">No metadata gaps found.</p>`}
-        </section>
-        <section class="prep-column">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Sources</p>
-              <h2>Spotify Only</h2>
-            </div>
-          </div>
-          ${prep.spotifyOnly.slice(0, 12).map(renderPrepTrack).join("") || `<p class="empty compact">No Spotify-only tracks found.</p>`}
-        </section>
-      </section>
-    </main>
-  `;
-}
-
-function renderPrepTrack(track, index = 0) {
-  const missing = track.missing?.length ? track.missing.join(", ") : track.sourceLabel || track.source || "";
-  return `
-    <div class="prep-track animated-row" style="--row-delay: ${index * 24}ms">
-      <div>
-        <strong>${escapeHtml(track.displayTitle || "Unknown track")}</strong>
-        <span>${escapeHtml(trackSecondary(track))}</span>
-      </div>
-      <em>${escapeHtml(missing)}</em>
     </div>
   `;
 }
@@ -1269,6 +1171,7 @@ function renderTrackTable(tracks, options = {}) {
           <th>#</th>
           <th>Track</th>
           <th>${options.unique ? "Last played" : "Time"}</th>
+          <th>Key</th>
           <th>BPM</th>
           <th>Length</th>
           <th>Plays</th>
@@ -1303,6 +1206,7 @@ function renderTrackRow(track, index = 0, options = {}) {
         </div>
       </td>
       <td>${escapeHtml(fmtDate(track.playedAt, { year: undefined }))}</td>
+      <td>${renderKeyBadge(track)}</td>
       <td>${track.bpm ? track.bpm.toFixed(1) : ""}</td>
       <td>${escapeHtml(fmtDuration(track.lengthSeconds))}</td>
       <td>${playCount || ""}</td>

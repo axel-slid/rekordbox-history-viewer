@@ -588,6 +588,7 @@ def extract() -> dict[str, Any]:
                         else ""
                     ),
                     "bpm": bpm(getattr(content, "BPM", None)) if content else None,
+                    "key": text(getattr(content, "KeyName", "")) if content else "",
                     "lengthSeconds": int_or_none(getattr(content, "Length", None)) if content else None,
                     "djPlayCount": int_or_none(getattr(content, "DJPlayCount", None)) if content else None,
                     "source": source_for(path_value, content) if content else "Unknown",
@@ -599,6 +600,7 @@ def extract() -> dict[str, Any]:
                     track["displayTitle"],
                     track["displayArtist"],
                     track["album"],
+                    track["key"],
                     track["path"],
                     track["source"],
                 )
