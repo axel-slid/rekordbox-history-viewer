@@ -101,8 +101,7 @@ h3 {
 .toolbar,
 .view-tabs,
 .view-actions,
-.panel-actions,
-.mix-counts {
+.panel-actions {
   display: flex;
   align-items: center;
 }
@@ -1104,44 +1103,6 @@ select:focus {
   font-size: 13px;
 }
 
-.mix-notice {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--line);
-  background: #f8f9fc;
-}
-
-.mix-notice strong,
-.mix-notice span {
-  display: block;
-}
-
-.mix-notice strong {
-  margin-bottom: 4px;
-  color: var(--ink);
-  font-size: 14px;
-}
-
-.mix-notice span {
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-.mix-counts {
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: end;
-}
-
-.mix-counts span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .table-wrap {
   min-height: 0;
   overflow: auto;
@@ -1338,7 +1299,6 @@ td:nth-child(8) {
 
   .view-header,
   .panel-header,
-  .mix-notice,
   .path-controls form,
   .builder-controls form,
   .builder-filter-row {

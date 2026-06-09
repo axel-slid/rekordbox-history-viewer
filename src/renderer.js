@@ -8,7 +8,6 @@ const state = {
   activeView: "sets",
   query: "",
   source: "all",
-  mixNoticeSessionId: null,
   copiedSetSessionId: null,
   topTracksLimit: 5,
   trackSort: "recent-desc",
@@ -343,18 +342,6 @@ function sourceSummary(tracks) {
     .sort((a, b) => b[1] - a[1])
     .map(([source, count]) => `${source}: ${count}`)
     .join(" · ");
-}
-
-function setMixReadiness(session) {
-  const localTracks = session.tracks.filter(
-    (track) => track.source === "Local file" && track.path && !track.path.startsWith("spotify:")
-  );
-  const spotifyTracks = session.tracks.filter((track) => track.source === "Spotify");
-  return {
-    localTracks,
-    spotifyTracks,
-    canRenderApproximation: localTracks.length === session.tracks.length && localTracks.length > 1
-  };
 }
 
 function buildTransitionModel(data) {
@@ -948,15 +935,6 @@ function renderDashboard() {
       window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     });
   }
-  document.querySelectorAll("[data-recreate-session-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.mixNoticeSessionId =
-        state.mixNoticeSessionId === button.dataset.recreateSessionId
-          ? null
-          : button.dataset.recreateSessionId;
-      renderDashboard();
-    });
-  });
   document.querySelectorAll("[data-download-setlist-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const session = state.data.sessions.find((item) => item.id === button.dataset.downloadSetlistId);
@@ -1528,38 +1506,11 @@ function renderSession(session) {
         ${state.copiedSetSessionId === session.id ? `<span class="panel-count">Copied</span>` : ""}
         <button data-copy-set-id="${escapeHtml(session.id)}" type="button">Copy Set</button>
         <button data-download-setlist-id="${escapeHtml(session.id)}" type="button">Download setlist</button>
-        <button data-recreate-session-id="${escapeHtml(session.id)}" type="button">Recreate mix</button>
       </div>
     </header>
-    ${renderMixNotice(session)}
     <div class="table-wrap">
       ${renderTrackTable(tracks)}
     </div>
-  `;
-}
-
-function renderMixNotice(session) {
-  if (state.mixNoticeSessionId !== session.id) return "";
-  const readiness = setMixReadiness(session);
-  const spotifyCount = readiness.spotifyTracks.length;
-  const localCount = readiness.localTracks.length;
-  const status = readiness.canRenderApproximation
-    ? "This set is made from local files, so an approximate crossfaded render is technically possible."
-    : "This history can recreate the setlist and timing, but not the exact audio mix from the available data.";
-  return `
-    <section class="mix-notice">
-      <div>
-        <p class="eyebrow">Mix recreation</p>
-        <strong>${escapeHtml(status)}</strong>
-        <span>
-          Exact transitions need a Rekordbox recording or mixer automation data. Spotify tracks cannot be downloaded or rendered into an audio file here; local audio files can be stitched into an approximate crossfade mix.
-        </span>
-      </div>
-      <div class="mix-counts">
-        <span>${localCount} local files</span>
-        <span>${spotifyCount} Spotify tracks</span>
-      </div>
-    </section>
   `;
 }
 

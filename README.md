@@ -32,7 +32,7 @@ xattr -dr com.apple.quarantine "$HOME/Downloads/Rekordbox History Viewer.app"
 - **Stats:** a GitHub-style activity heatmap, genre donut, total play time, average time per day, busiest day, top source, average BPM, and repeated tracks.
 - **Tracks:** a searchable track library with unique tracks, play counts, last played time, Camelot-style key badges, BPM, length, source, and sorting.
 - **Paths:** start from a song, expand a rightward branching tree of historical next-track choices, see color-coded Camelot keys, and copy any path from the root song.
-- **Exports:** copy a timed setlist, download a setlist, or generate a text prompt for manually recreating a set.
+- **Exports:** copy a timed setlist or download a setlist.
 
 ## Screenshots
 
