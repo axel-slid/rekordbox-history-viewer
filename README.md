@@ -11,25 +11,27 @@ Pick the file for your computer, unzip it if needed, then open the app. The firs
 ### Mac
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.3-arm64-mac.zip`.
+2. Download `Rekordbox-History-Viewer-0.1.3-mac-apple-silicon.zip`.
 3. Double-click the zip file. This creates the app.
 4. Double-click `Rekordbox History Viewer`.
 5. If macOS blocks it, right-click `Rekordbox History Viewer`, choose **Open**, then choose **Open** again.
-6. Leave the app open on first launch while it prepares the Rekordbox reader.
+6. If macOS says the app is damaged, open Terminal and run `xattr -dr com.apple.quarantine ~/Downloads/Rekordbox\ History\ Viewer.app`.
+7. Leave the app open on first launch while it prepares the Rekordbox reader.
 
 ### Windows
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.3-win.zip`.
+2. Download `Rekordbox-History-Viewer-0.1.3-windows.zip`.
 3. Right-click the zip file and choose **Extract All**.
 4. Open the extracted folder.
 5. Double-click `Rekordbox History Viewer.exe`.
-6. Leave the app open on first launch while it prepares the Rekordbox reader.
+6. If Windows SmartScreen warns you, choose **More info**, then **Run anyway**.
+7. Leave the app open on first launch while it prepares the Rekordbox reader.
 
 ### Linux
 
 1. Open the download link above.
-2. Download `Rekordbox.History.Viewer-0.1.3.AppImage`.
+2. Download `Rekordbox-History-Viewer-0.1.3-linux.AppImage`.
 3. Right-click the file, open **Properties**, and allow it to run as a program.
 4. Double-click the AppImage.
 5. Leave the app open on first launch while it prepares the Rekordbox reader.
