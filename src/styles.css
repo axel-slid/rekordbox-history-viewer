@@ -852,6 +852,49 @@ select:focus {
   font-size: 13px;
 }
 
+.audio-recorder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
+  align-items: end;
+  gap: 18px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.audio-recorder-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.audio-recorder-head strong,
+.audio-recorder-head span,
+.audio-recorder label span {
+  display: block;
+}
+
+.audio-recorder-head strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.audio-recorder-head span,
+.audio-recorder label span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audio-recorder label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .midi-replay {
   display: grid;
   gap: 8px;
@@ -883,7 +926,7 @@ select:focus {
 
 .midi-live-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid var(--line);
 }
 
@@ -1478,7 +1521,8 @@ td:nth-child(8) {
   }
 
   .midi-controls,
-  .midi-live-grid {
+  .midi-live-grid,
+  .audio-recorder {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1523,14 +1567,16 @@ td:nth-child(8) {
   .builder-controls form,
   .builder-filter-row,
   .midi-controls,
-  .midi-live-grid {
+  .midi-live-grid,
+  .audio-recorder {
     align-items: stretch;
     grid-template-columns: 1fr;
     flex-direction: column;
   }
 
   .midi-actions,
-  .midi-replay-head {
+  .midi-replay-head,
+  .audio-recorder-head {
     justify-content: flex-start;
     flex-wrap: wrap;
   }

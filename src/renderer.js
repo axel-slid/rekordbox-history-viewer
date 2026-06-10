@@ -43,6 +43,15 @@ const state = {
   hidSelectedDeviceId: "",
   hidMonitorCount: 0,
   hidLastSeenEvent: null,
+  audioStatus: "idle",
+  audioError: "",
+  audioInputs: [],
+  audioSelectedInputId: "",
+  audioRecording: false,
+  audioStartedAt: 0,
+  audioDurationMs: 0,
+  audioReady: false,
+  audioMimeType: "",
   midiCopied: false,
   midiReplayRunning: false,
   midiReplayStartedAt: 0,
@@ -55,6 +64,11 @@ let midiRenderTimer = null;
 let midiSaveTimer = null;
 let midiReplayTimer = null;
 let activeHidDevice = null;
+let audioStream = null;
+let audioRecorder = null;
+let audioChunks = [];
+let recordedAudioBlob = null;
+let audioDurationTimer = null;
 
 function loadStoredMidiEvents() {
   try {
@@ -1177,11 +1191,28 @@ function renderDashboard() {
       renderDashboard();
     });
   }
+  const audioInputSelect = document.querySelector("[data-audio-input]");
+  if (audioInputSelect) {
+    audioInputSelect.value = state.audioSelectedInputId;
+    audioInputSelect.addEventListener("change", (event) => {
+      state.audioSelectedInputId = event.target.value;
+      renderDashboard();
+    });
+  }
   document.querySelector("[data-midi-connect]")?.addEventListener("click", () => {
     connectMidi();
   });
   document.querySelector("[data-hid-connect]")?.addEventListener("click", () => {
     connectHid();
+  });
+  document.querySelector("[data-audio-connect]")?.addEventListener("click", () => {
+    connectAudioDevices();
+  });
+  document.querySelector("[data-audio-record]")?.addEventListener("click", () => {
+    toggleSetAudioRecording();
+  });
+  document.querySelector("[data-audio-download]")?.addEventListener("click", () => {
+    downloadRecordedAudio();
   });
   document.querySelector("[data-midi-record]")?.addEventListener("click", () => {
     toggleMidiRecording();
@@ -1339,6 +1370,34 @@ function renderMidiLoggerView() {
               ? `<p class="midi-error">${escapeHtml(state.hidError)}</p>`
               : `<p class="midi-note">This records future controller actions only. Try MIDI first; if Rekordbox responds but MIDI stays at 0, click Connect HID because the FLX10 may be sending controller reports outside plain MIDI.</p>`
         }
+        <div class="audio-recorder">
+          <div class="audio-recorder-head">
+            <div>
+              <strong>${escapeHtml(audioStatusText())}</strong>
+              <span>${escapeHtml(audioStatusDetail())}</span>
+            </div>
+            <div class="midi-actions">
+              <button data-audio-connect type="button">${state.audioInputs.length ? "Refresh Audio Inputs" : "Connect Audio"}</button>
+              <button data-audio-record type="button">${state.audioRecording ? "Stop Audio" : "Start Audio"}</button>
+              <button data-audio-download type="button" ${state.audioReady ? "" : "disabled"}>Download Audio File</button>
+            </div>
+          </div>
+          <label>
+            <span>Audio input</span>
+            <select data-audio-input>
+              <option value="">Default audio input</option>
+              ${state.audioInputs
+                .map(
+                  (input) => `
+                    <option value="${escapeHtml(input.deviceId)}">
+                      ${escapeHtml(input.label || "Unnamed audio input")}
+                    </option>
+                  `
+                )
+                .join("")}
+            </select>
+          </label>
+        </div>
         <div class="midi-replay">
           <div class="midi-replay-head">
             <span>${state.midiReplayRunning ? "Replaying action log" : "Replay timeline"}</span>
@@ -1352,6 +1411,7 @@ function renderMidiLoggerView() {
           ${midiStat("Recording", state.midiRecording ? "On" : "Off", state.midiSessionStartedAt ? fmtDate(state.midiSessionStartedAt) : "No active session")}
           ${midiStat("Incoming MIDI", state.midiMonitorCount ? state.midiMonitorCount.toLocaleString() : "0", state.midiLastSeenEvent ? `${state.midiLastSeenEvent.action} · ${state.midiLastSeenEvent.inputName}` : "Move a control to test")}
           ${midiStat("HID reports", state.hidMonitorCount ? state.hidMonitorCount.toLocaleString() : "0", state.hidLastSeenEvent ? `${state.hidLastSeenEvent.action} · ${state.hidLastSeenEvent.inputName}` : "Try Connect HID")}
+          ${midiStat("Set audio", state.audioRecording ? fmtRelativeTimestamp(state.audioDurationMs) : state.audioReady ? "Ready" : "Not recorded", state.audioMimeType || "Choose FLX10/master input")}
           ${midiStat("Last recorded", lastEvent ? lastEvent.action : "None", lastEvent ? fmtRelativeTimestamp(lastEvent.relativeMs) : "")}
           ${midiStat("FLX10 inputs", flxInputs.length ? flxInputs.length.toLocaleString() : "0", flxInputs[0]?.name || "Connect the controller, then refresh")}
           ${midiStat("Replay cursor", state.midiReplayIndex >= 0 ? `${state.midiReplayIndex + 1} / ${eventCount}` : "Idle", state.midiReplayRunning ? "Visual replay" : "")}
@@ -1418,6 +1478,27 @@ function hidStatusDetail() {
   return "Use this if Rekordbox moves but MIDI stays at 0";
 }
 
+function audioStatusText() {
+  if (state.audioRecording) return "Recording set audio";
+  if (state.audioReady) return "Set audio ready";
+  if (state.audioStatus === "connected") return `${state.audioInputs.length} audio input${state.audioInputs.length === 1 ? "" : "s"} found`;
+  if (state.audioStatus === "error") return "Audio recorder unavailable";
+  return "Set audio not connected";
+}
+
+function audioStatusDetail() {
+  if (state.audioError) return state.audioError;
+  if (state.audioRecording) return `Capturing ${selectedAudioInputLabel()} for ${fmtRelativeTimestamp(state.audioDurationMs)}`;
+  if (state.audioReady) return "Download this recording as the audio file for the set";
+  if (state.audioInputs.length) return "Select the FLX10, mixer, loopback, or master-output input before recording";
+  return "Connect an audio input to record the real mix while you play";
+}
+
+function selectedAudioInputLabel() {
+  const selected = state.audioInputs.find((input) => input.deviceId === state.audioSelectedInputId);
+  return selected?.label || "default audio input";
+}
+
 async function connectMidi() {
   if (!navigator.requestMIDIAccess) {
     state.midiStatus = "error";
@@ -1443,6 +1524,142 @@ async function connectMidi() {
     state.midiError = error?.message || "Could not access MIDI devices.";
   }
   renderDashboard();
+}
+
+async function connectAudioDevices() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    state.audioStatus = "error";
+    state.audioError = "This Electron/Chromium build does not expose audio capture.";
+    renderDashboard();
+    return;
+  }
+
+  try {
+    state.audioError = "";
+    const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    permissionStream.getTracks().forEach((track) => track.stop());
+    await refreshAudioInputs();
+    state.audioStatus = "connected";
+  } catch (error) {
+    state.audioStatus = "error";
+    state.audioError = error?.message || "Could not access audio input.";
+  }
+  renderDashboard();
+}
+
+async function refreshAudioInputs() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  state.audioInputs = devices
+    .filter((device) => device.kind === "audioinput")
+    .map((device) => ({
+      deviceId: device.deviceId,
+      label: device.label || "Unnamed audio input"
+    }));
+  if (state.audioSelectedInputId && !state.audioInputs.some((input) => input.deviceId === state.audioSelectedInputId)) {
+    state.audioSelectedInputId = "";
+  }
+  if (!state.audioSelectedInputId) {
+    const flxInput =
+      state.audioInputs.find((input) => /flx\s*10|flx10|ddj-flx10|ddj flx10/i.test(input.label)) ||
+      state.audioInputs.find((input) => /alphatheta|pioneer/i.test(input.label));
+    if (flxInput) state.audioSelectedInputId = flxInput.deviceId;
+  }
+}
+
+function audioMimeType() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  return candidates.find((type) => window.MediaRecorder?.isTypeSupported(type)) || "";
+}
+
+async function toggleSetAudioRecording() {
+  if (state.audioRecording) {
+    stopSetAudioRecording();
+    return;
+  }
+  await startSetAudioRecording();
+}
+
+async function startSetAudioRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    state.audioStatus = "error";
+    state.audioError = "Audio recording is not available in this app runtime.";
+    renderDashboard();
+    return;
+  }
+
+  try {
+    if (!state.audioInputs.length) await connectAudioDevices();
+    if (state.audioStatus === "error") return;
+    state.audioError = "";
+    if (recordedAudioBlob) {
+      recordedAudioBlob = null;
+      state.audioReady = false;
+    }
+    const constraints = {
+      audio: state.audioSelectedInputId
+        ? { deviceId: { exact: state.audioSelectedInputId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        : { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false
+    };
+    audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const mimeType = audioMimeType();
+    audioChunks = [];
+    audioRecorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
+    audioRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) audioChunks.push(event.data);
+    });
+    audioRecorder.addEventListener("stop", () => {
+      recordedAudioBlob = new Blob(audioChunks, { type: state.audioMimeType || audioChunks[0]?.type || "audio/webm" });
+      state.audioReady = recordedAudioBlob.size > 0;
+      state.audioRecording = false;
+      state.audioDurationMs = Math.max(0, Math.round(performance.now() - state.audioStartedAt));
+      audioStream?.getTracks().forEach((track) => track.stop());
+      audioStream = null;
+      window.clearInterval(audioDurationTimer);
+      renderDashboard();
+    });
+    state.audioMimeType = audioRecorder.mimeType || mimeType || "audio/webm";
+    state.audioStartedAt = performance.now();
+    state.audioDurationMs = 0;
+    state.audioRecording = true;
+    state.audioStatus = "connected";
+    audioRecorder.start(1000);
+    window.clearInterval(audioDurationTimer);
+    audioDurationTimer = window.setInterval(() => {
+      state.audioDurationMs = Math.max(0, Math.round(performance.now() - state.audioStartedAt));
+      if (state.activeView === "midi") renderDashboard();
+    }, 1000);
+  } catch (error) {
+    state.audioStatus = "error";
+    state.audioError = error?.message || "Could not start set audio recording.";
+    audioStream?.getTracks().forEach((track) => track.stop());
+    audioStream = null;
+  }
+  renderDashboard();
+}
+
+function stopSetAudioRecording() {
+  if (audioRecorder && audioRecorder.state !== "inactive") {
+    audioRecorder.stop();
+    return;
+  }
+  state.audioRecording = false;
+  audioStream?.getTracks().forEach((track) => track.stop());
+  audioStream = null;
+  window.clearInterval(audioDurationTimer);
+  renderDashboard();
+}
+
+function downloadRecordedAudio() {
+  if (!recordedAudioBlob) return;
+  const extension = state.audioMimeType.includes("mp4") ? "m4a" : "webm";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const url = URL.createObjectURL(recordedAudioBlob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `rekordbox-set-audio-${stamp}.${extension}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 async function connectHid() {
