@@ -182,7 +182,10 @@ function createWindow() {
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === "media");
+    callback(permission === "media" || permission === "midi" || permission === "midiSysex");
+  });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return permission === "media" || permission === "midi" || permission === "midiSysex";
   });
 
   ipcMain.handle("toggle-fullscreen", (event) => {

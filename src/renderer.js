@@ -1,6 +1,8 @@
 import "./styles.css";
 
 const app = document.querySelector("#app");
+const MIDI_LOG_STORAGE_KEY = "rekordbox-midi-logger-events-v1";
+const MIDI_LOG_LIMIT = 20000;
 
 const state = {
   data: null,
@@ -24,8 +26,36 @@ const state = {
   builderSort: "popularity",
   builderBpmTolerance: 8,
   builderVisibleCounts: new Map(),
-  builderCopiedSetPath: ""
+  builderCopiedSetPath: "",
+  midiStatus: "idle",
+  midiError: "",
+  midiInputs: [],
+  midiSelectedInputId: "all",
+  midiRecording: false,
+  midiRecordStartedAt: 0,
+  midiSessionStartedAt: "",
+  midiEvents: loadStoredMidiEvents(),
+  midiCopied: false,
+  midiReplayRunning: false,
+  midiReplayStartedAt: 0,
+  midiReplayPositionMs: 0,
+  midiReplayIndex: -1
 };
+
+let midiAccess = null;
+let midiRenderTimer = null;
+let midiSaveTimer = null;
+let midiReplayTimer = null;
+
+function loadStoredMidiEvents() {
+  try {
+    const raw = window.localStorage?.getItem(MIDI_LOG_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map((event, index) => ({ ...event, index })) : [];
+  } catch {
+    return [];
+  }
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -850,6 +880,7 @@ function renderShell() {
           <button data-view="tracks" type="button">Tracks</button>
           <button data-view="paths" type="button">Paths</button>
           <button data-view="builder" type="button">Set Builder</button>
+          <button data-view="midi" type="button">MIDI Logger</button>
         </nav>
       </div>
       <div class="toolbar">
@@ -1129,6 +1160,37 @@ function renderDashboard() {
       renderDashboard();
     });
   });
+  const midiInputSelect = document.querySelector("[data-midi-input]");
+  if (midiInputSelect) {
+    midiInputSelect.value = state.midiSelectedInputId;
+    midiInputSelect.addEventListener("change", (event) => {
+      state.midiSelectedInputId = event.target.value;
+      renderDashboard();
+    });
+  }
+  document.querySelector("[data-midi-connect]")?.addEventListener("click", () => {
+    connectMidi();
+  });
+  document.querySelector("[data-midi-record]")?.addEventListener("click", () => {
+    toggleMidiRecording();
+  });
+  document.querySelector("[data-midi-replay]")?.addEventListener("click", () => {
+    toggleMidiReplay();
+  });
+  document.querySelector("[data-midi-clear]")?.addEventListener("click", () => {
+    clearMidiLog();
+  });
+  document.querySelector("[data-midi-export-json]")?.addEventListener("click", () => {
+    downloadMidiLog("json");
+  });
+  document.querySelector("[data-midi-export-csv]")?.addEventListener("click", () => {
+    downloadMidiLog("csv");
+  });
+  document.querySelector("[data-midi-copy]")?.addEventListener("click", async () => {
+    await copyText(formatMidiLogText());
+    state.midiCopied = true;
+    renderDashboard();
+  });
 
   const newSessionList = document.querySelector(".session-list");
   if (newSessionList) {
@@ -1155,6 +1217,7 @@ function renderActiveView(sessions, selected) {
   if (state.activeView === "tracks") return renderTracksView();
   if (state.activeView === "paths") return renderPathsView();
   if (state.activeView === "builder") return renderSetBuilderView();
+  if (state.activeView === "midi") return renderMidiLoggerView();
   return renderSetsView(sessions, selected);
 }
 
@@ -1192,6 +1255,435 @@ function renderTracksView() {
       </section>
     </main>
   `;
+}
+
+function renderMidiLoggerView() {
+  const eventCount = state.midiEvents.length;
+  const lastEvent = state.midiEvents.at(-1);
+  const latestEvents = state.midiEvents.slice(-160).reverse();
+  const selectedInput = state.midiInputs.find((input) => input.id === state.midiSelectedInputId);
+  const flxInputs = state.midiInputs.filter((input) => isFlx10Input(input));
+  const statusText =
+    state.midiStatus === "connected"
+      ? `${state.midiInputs.length} MIDI input${state.midiInputs.length === 1 ? "" : "s"} connected`
+      : state.midiStatus === "error"
+        ? "MIDI unavailable"
+        : "MIDI not connected";
+  const replayDuration = Math.max(lastEvent?.relativeMs || 0, 1);
+  const replayPercent = Math.min(100, (state.midiReplayPositionMs / replayDuration) * 100);
+
+  return `
+    <main class="view-page midi-view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">MIDI Logger</p>
+          <h2>FLX10 Action Capture</h2>
+        </div>
+        <div class="view-actions">
+          <span>${eventCount.toLocaleString()} events</span>
+          ${state.midiCopied ? `<span>Copied</span>` : ""}
+          <button data-midi-connect type="button">${midiAccess ? "Refresh MIDI" : "Connect MIDI"}</button>
+          <button data-midi-record type="button">${state.midiRecording ? "Stop Logging" : "Start Logging"}</button>
+        </div>
+      </header>
+      <section class="midi-panel">
+        <div class="midi-controls">
+          <div class="midi-status-line">
+            <strong>${escapeHtml(statusText)}</strong>
+            <span>${escapeHtml(midiStatusDetail(flxInputs, selectedInput))}</span>
+          </div>
+          <label>
+            <span>Input</span>
+            <select data-midi-input>
+              <option value="all">All MIDI inputs</option>
+              ${state.midiInputs
+                .map(
+                  (input) => `
+                    <option value="${escapeHtml(input.id)}">
+                      ${escapeHtml(input.name)}${isFlx10Input(input) ? " (FLX10)" : ""}
+                    </option>
+                  `
+                )
+                .join("")}
+            </select>
+          </label>
+          <div class="midi-actions">
+            <button data-midi-replay type="button" ${eventCount ? "" : "disabled"}>${state.midiReplayRunning ? "Stop Replay" : "Replay Log"}</button>
+            <button data-midi-copy type="button" ${eventCount ? "" : "disabled"}>Copy Log</button>
+            <button data-midi-export-json type="button" ${eventCount ? "" : "disabled"}>Export JSON</button>
+            <button data-midi-export-csv type="button" ${eventCount ? "" : "disabled"}>Export CSV</button>
+            <button data-midi-clear type="button" ${eventCount ? "" : "disabled"}>Clear</button>
+          </div>
+        </div>
+        ${
+          state.midiError
+            ? `<p class="midi-error">${escapeHtml(state.midiError)}</p>`
+            : `<p class="midi-note">This records future controller actions only. It can visually replay the MIDI timeline in the app; exact audio mix recreation still needs matching track playback and audio-render logic.</p>`
+        }
+        <div class="midi-replay">
+          <div class="midi-replay-head">
+            <span>${state.midiReplayRunning ? "Replaying action log" : "Replay timeline"}</span>
+            <span>${fmtRelativeTimestamp(state.midiReplayPositionMs)} / ${fmtRelativeTimestamp(replayDuration)}</span>
+          </div>
+          <div class="midi-replay-bar">
+            <i style="width: ${replayPercent.toFixed(2)}%"></i>
+          </div>
+        </div>
+        <div class="midi-live-grid">
+          ${midiStat("Recording", state.midiRecording ? "On" : "Off", state.midiSessionStartedAt ? fmtDate(state.midiSessionStartedAt) : "No active session")}
+          ${midiStat("Last action", lastEvent ? lastEvent.action : "None", lastEvent ? fmtRelativeTimestamp(lastEvent.relativeMs) : "")}
+          ${midiStat("FLX10 inputs", flxInputs.length ? flxInputs.length.toLocaleString() : "0", flxInputs[0]?.name || "Connect the controller, then refresh")}
+          ${midiStat("Replay cursor", state.midiReplayIndex >= 0 ? `${state.midiReplayIndex + 1} / ${eventCount}` : "Idle", state.midiReplayRunning ? "Visual replay" : "")}
+        </div>
+        <section class="midi-log">
+          <div class="midi-log-head">
+            <h3>Captured MIDI Actions</h3>
+            <span>${latestEvents.length ? "Newest first" : "No MIDI actions captured yet"}</span>
+          </div>
+          <div class="midi-table">
+            ${latestEvents.length ? latestEvents.map(renderMidiEventRow).join("") : `<p class="empty compact">Connect the FLX10, choose the input, then start logging.</p>`}
+          </div>
+        </section>
+      </section>
+    </main>
+  `;
+}
+
+function midiStat(label, value, sub = "") {
+  return `
+    <div class="midi-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${sub ? `<em>${escapeHtml(sub)}</em>` : ""}
+    </div>
+  `;
+}
+
+function renderMidiEventRow(event) {
+  const isReplayActive = state.midiReplayRunning && event.index === state.midiReplayIndex;
+  return `
+    <div class="midi-row${isReplayActive ? " is-replay-active" : ""}">
+      <span>${escapeHtml(fmtRelativeTimestamp(event.relativeMs))}</span>
+      <strong>${escapeHtml(event.action)}</strong>
+      <em>${escapeHtml(event.detail)}</em>
+      <em>${escapeHtml(event.inputName)}</em>
+      <code>${escapeHtml(event.dataHex)}</code>
+    </div>
+  `;
+}
+
+function isFlx10Input(input) {
+  return /flx\s*10|flx10|ddj-flx10|ddj flx10/i.test(`${input?.name || ""} ${input?.manufacturer || ""}`);
+}
+
+function midiStatusDetail(flxInputs, selectedInput) {
+  if (state.midiError) return state.midiError;
+  if (state.midiRecording) return `Logging ${selectedInput ? selectedInput.name : state.midiSelectedInputId === "all" ? "all inputs" : "selected input"}`;
+  if (flxInputs.length) return `${flxInputs[0].name} detected`;
+  if (state.midiInputs.length) return "No FLX10-named input found; choose the controller input manually";
+  return "Connect the DDJ-FLX10, then click Connect MIDI";
+}
+
+async function connectMidi() {
+  if (!navigator.requestMIDIAccess) {
+    state.midiStatus = "error";
+    state.midiError = "This Electron/Chromium build does not expose Web MIDI.";
+    renderDashboard();
+    return;
+  }
+
+  try {
+    state.midiError = "";
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    state.midiStatus = "connected";
+    refreshMidiInputs();
+    bindMidiInputs();
+    midiAccess.onstatechange = () => {
+      refreshMidiInputs();
+      bindMidiInputs();
+      renderMidiIfVisible();
+    };
+  } catch (error) {
+    state.midiStatus = "error";
+    state.midiError = error?.message || "Could not access MIDI devices.";
+  }
+  renderDashboard();
+}
+
+function refreshMidiInputs() {
+  if (!midiAccess) {
+    state.midiInputs = [];
+    return;
+  }
+  state.midiInputs = Array.from(midiAccess.inputs.values()).map((input) => ({
+    id: input.id,
+    name: input.name || "Unnamed MIDI input",
+    manufacturer: input.manufacturer || "",
+    state: input.state || "",
+    connection: input.connection || ""
+  }));
+  const selectedStillExists = state.midiSelectedInputId === "all" || state.midiInputs.some((input) => input.id === state.midiSelectedInputId);
+  if (!selectedStillExists) state.midiSelectedInputId = "all";
+  if (state.midiSelectedInputId === "all") {
+    const flxInput = state.midiInputs.find(isFlx10Input);
+    if (flxInput) state.midiSelectedInputId = flxInput.id;
+  }
+}
+
+function bindMidiInputs() {
+  if (!midiAccess) return;
+  for (const input of midiAccess.inputs.values()) {
+    input.onmidimessage = handleMidiMessage;
+  }
+}
+
+function toggleMidiRecording() {
+  if (state.midiRecording) {
+    state.midiRecording = false;
+    saveMidiLogNow();
+    renderDashboard();
+    return;
+  }
+
+  if (!midiAccess) {
+    connectMidi().then(() => {
+      if (midiAccess) startMidiRecording();
+    });
+    return;
+  }
+  startMidiRecording();
+}
+
+function startMidiRecording() {
+  state.midiRecording = true;
+  state.midiCopied = false;
+  state.midiRecordStartedAt = performance.now();
+  state.midiSessionStartedAt = new Date().toISOString();
+  renderDashboard();
+}
+
+function handleMidiMessage(message) {
+  if (!state.midiRecording) return;
+  const input = message.currentTarget || message.target;
+  const inputId = input?.id || "";
+  if (state.midiSelectedInputId !== "all" && inputId !== state.midiSelectedInputId) return;
+
+  const data = Array.from(message.data || []);
+  const decoded = decodeMidiMessage(data);
+  const event = {
+    id: `${Date.now()}-${state.midiEvents.length}`,
+    index: state.midiEvents.length,
+    relativeMs: Math.max(0, Math.round(performance.now() - state.midiRecordStartedAt)),
+    at: new Date().toISOString(),
+    inputId,
+    inputName: input?.name || "Unknown MIDI input",
+    data,
+    dataHex: data.map((byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join(" "),
+    ...decoded
+  };
+
+  state.midiEvents.push(event);
+  if (state.midiEvents.length > MIDI_LOG_LIMIT) {
+    state.midiEvents.splice(0, state.midiEvents.length - MIDI_LOG_LIMIT);
+    state.midiEvents.forEach((item, index) => {
+      item.index = index;
+    });
+  }
+  scheduleMidiSave();
+  scheduleMidiRender();
+}
+
+function decodeMidiMessage(data) {
+  const status = data[0] || 0;
+  const command = status & 0xf0;
+  const channel = (status & 0x0f) + 1;
+  const first = data[1] ?? 0;
+  const second = data[2] ?? 0;
+
+  if (status >= 0xf0) {
+    return {
+      action: "System message",
+      detail: `Status ${status}`,
+      type: "system",
+      channel: null,
+      control: null,
+      value: second
+    };
+  }
+
+  if (command === 0x80 || (command === 0x90 && second === 0)) {
+    return {
+      action: "Button release",
+      detail: `Ch ${channel} · note ${first}`,
+      type: "note-off",
+      channel,
+      control: first,
+      value: second
+    };
+  }
+
+  if (command === 0x90) {
+    return {
+      action: "Button / pad press",
+      detail: `Ch ${channel} · note ${first} · velocity ${second}`,
+      type: "note-on",
+      channel,
+      control: first,
+      value: second
+    };
+  }
+
+  if (command === 0xb0) {
+    return {
+      action: "Knob / fader / encoder",
+      detail: `Ch ${channel} · CC ${first} · value ${second}`,
+      type: "control-change",
+      channel,
+      control: first,
+      value: second
+    };
+  }
+
+  if (command === 0xe0) {
+    const bend = ((second << 7) + first) - 8192;
+    return {
+      action: "Jog / pitch movement",
+      detail: `Ch ${channel} · bend ${bend}`,
+      type: "pitch-bend",
+      channel,
+      control: null,
+      value: bend
+    };
+  }
+
+  return {
+    action: "MIDI message",
+    detail: `Ch ${channel} · ${data.join(", ")}`,
+    type: `0x${command.toString(16)}`,
+    channel,
+    control: first,
+    value: second
+  };
+}
+
+function scheduleMidiSave() {
+  window.clearTimeout(midiSaveTimer);
+  midiSaveTimer = window.setTimeout(saveMidiLogNow, 350);
+}
+
+function saveMidiLogNow() {
+  try {
+    window.localStorage?.setItem(MIDI_LOG_STORAGE_KEY, JSON.stringify(state.midiEvents));
+  } catch {
+    state.midiError = "Could not save MIDI log locally. Export the log before closing the app.";
+  }
+}
+
+function scheduleMidiRender() {
+  if (state.activeView !== "midi") return;
+  if (midiRenderTimer) return;
+  midiRenderTimer = window.setTimeout(() => {
+    midiRenderTimer = null;
+    renderDashboard();
+  }, 180);
+}
+
+function renderMidiIfVisible() {
+  if (state.activeView === "midi") renderDashboard();
+}
+
+function clearMidiLog() {
+  stopMidiReplay(false);
+  state.midiEvents = [];
+  state.midiReplayPositionMs = 0;
+  state.midiReplayIndex = -1;
+  state.midiCopied = false;
+  saveMidiLogNow();
+  renderDashboard();
+}
+
+function formatMidiLogText() {
+  return state.midiEvents
+    .map((event) => `${fmtRelativeTimestamp(event.relativeMs)} - ${event.action} - ${event.detail} - ${event.inputName} - ${event.dataHex}`)
+    .join("\n");
+}
+
+function midiLogCsv() {
+  const rows = [["relative_ms", "time", "input", "action", "detail", "type", "channel", "control", "value", "data_hex"]];
+  for (const event of state.midiEvents) {
+    rows.push([
+      event.relativeMs,
+      event.at,
+      event.inputName,
+      event.action,
+      event.detail,
+      event.type,
+      event.channel ?? "",
+      event.control ?? "",
+      event.value ?? "",
+      event.dataHex
+    ]);
+  }
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function downloadMidiLog(format) {
+  const isJson = format === "json";
+  const content = isJson ? JSON.stringify({ exportedAt: new Date().toISOString(), events: state.midiEvents }, null, 2) : midiLogCsv();
+  const blob = new Blob([content], { type: isJson ? "application/json" : "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  anchor.href = url;
+  anchor.download = `rekordbox-midi-log-${stamp}.${isJson ? "json" : "csv"}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function toggleMidiReplay() {
+  if (state.midiReplayRunning) {
+    stopMidiReplay();
+    return;
+  }
+  startMidiReplay();
+}
+
+function startMidiReplay() {
+  if (!state.midiEvents.length) return;
+  stopMidiReplay(false);
+  state.midiReplayRunning = true;
+  state.midiReplayStartedAt = performance.now();
+  state.midiReplayPositionMs = 0;
+  state.midiReplayIndex = -1;
+  midiReplayTimer = window.setInterval(updateMidiReplay, 45);
+  updateMidiReplay();
+}
+
+function stopMidiReplay(shouldRender = true) {
+  window.clearInterval(midiReplayTimer);
+  midiReplayTimer = null;
+  state.midiReplayRunning = false;
+  if (shouldRender) renderMidiIfVisible();
+}
+
+function updateMidiReplay() {
+  const lastEvent = state.midiEvents.at(-1);
+  const duration = lastEvent?.relativeMs || 0;
+  const elapsed = Math.min(duration, Math.round(performance.now() - state.midiReplayStartedAt));
+  state.midiReplayPositionMs = elapsed;
+  let index = -1;
+  for (let cursor = 0; cursor < state.midiEvents.length; cursor += 1) {
+    if (state.midiEvents[cursor].relativeMs <= elapsed) index = cursor;
+    else break;
+  }
+  state.midiReplayIndex = index;
+  if (elapsed >= duration) stopMidiReplay(false);
+  renderMidiIfVisible();
 }
 
 function renderSetBuilderView() {

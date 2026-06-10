@@ -111,6 +111,7 @@ h3 {
 }
 
 .view-tabs {
+  flex-wrap: wrap;
   gap: 22px;
 }
 
@@ -776,6 +777,210 @@ select:focus {
   margin: 10px 0 16px;
 }
 
+.midi-view {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.midi-panel {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.midi-controls {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(220px, 320px) auto;
+  align-items: end;
+  gap: 18px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.midi-status-line strong,
+.midi-status-line span,
+.midi-controls label span,
+.midi-stat span,
+.midi-stat strong,
+.midi-stat em,
+.midi-log-head span {
+  display: block;
+}
+
+.midi-status-line strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.midi-status-line span,
+.midi-note,
+.midi-controls label span,
+.midi-log-head span,
+.midi-row em {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.midi-controls label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.midi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 12px;
+}
+
+.midi-note,
+.midi-error {
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.4;
+}
+
+.midi-error {
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.midi-replay {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.midi-replay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.midi-replay-bar {
+  height: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.midi-replay-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 90ms linear;
+}
+
+.midi-live-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+
+.midi-stat {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 14px 16px 14px 0;
+  border-right: 1px solid var(--line);
+}
+
+.midi-stat:last-child {
+  border-right: 0;
+}
+
+.midi-stat span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.midi-stat strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.midi-stat em {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.midi-log {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.midi-log-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.midi-table {
+  min-height: 0;
+  overflow: auto;
+}
+
+.midi-row {
+  display: grid;
+  grid-template-columns: 92px minmax(150px, 220px) minmax(220px, 1fr) minmax(180px, 260px) 132px;
+  align-items: center;
+  gap: 14px;
+  min-height: 42px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.midi-row.is-replay-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.midi-row span,
+.midi-row strong,
+.midi-row em,
+.midi-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.midi-row span,
+.midi-row code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.midi-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.midi-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .paths-view {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -1272,6 +1477,11 @@ td:nth-child(8) {
     grid-template-columns: 1fr;
   }
 
+  .midi-controls,
+  .midi-live-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .donut-wrap {
     grid-template-columns: 188px minmax(0, 1fr);
   }
@@ -1311,10 +1521,18 @@ td:nth-child(8) {
   .panel-header,
   .path-controls form,
   .builder-controls form,
-  .builder-filter-row {
+  .builder-filter-row,
+  .midi-controls,
+  .midi-live-grid {
     align-items: stretch;
     grid-template-columns: 1fr;
     flex-direction: column;
+  }
+
+  .midi-actions,
+  .midi-replay-head {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .donut-wrap {

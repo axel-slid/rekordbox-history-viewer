@@ -33,6 +33,7 @@ xattr -dr com.apple.quarantine "$HOME/Downloads/Rekordbox History Viewer.app"
 - **Tracks:** a searchable track library with unique tracks, play counts, last played time, Camelot-style key badges, BPM, length, source, and sorting.
 - **Paths:** start from a song, expand a rightward branching tree of historical next-track choices, see color-coded Camelot keys, and copy any path from the root song.
 - **Exports:** copy a timed setlist or download a setlist.
+- **MIDI Logger:** capture future DDJ-FLX10 MIDI actions, export the event log, and replay the action timeline visually inside the app.
 
 ## Screenshots
 
