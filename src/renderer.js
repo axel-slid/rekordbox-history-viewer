@@ -35,6 +35,8 @@ const state = {
   midiRecordStartedAt: 0,
   midiSessionStartedAt: "",
   midiEvents: loadStoredMidiEvents(),
+  midiMonitorCount: 0,
+  midiLastSeenEvent: null,
   midiCopied: false,
   midiReplayRunning: false,
   midiReplayStartedAt: 0,
@@ -1331,7 +1333,8 @@ function renderMidiLoggerView() {
         </div>
         <div class="midi-live-grid">
           ${midiStat("Recording", state.midiRecording ? "On" : "Off", state.midiSessionStartedAt ? fmtDate(state.midiSessionStartedAt) : "No active session")}
-          ${midiStat("Last action", lastEvent ? lastEvent.action : "None", lastEvent ? fmtRelativeTimestamp(lastEvent.relativeMs) : "")}
+          ${midiStat("Incoming MIDI", state.midiMonitorCount ? state.midiMonitorCount.toLocaleString() : "0", state.midiLastSeenEvent ? `${state.midiLastSeenEvent.action} · ${state.midiLastSeenEvent.inputName}` : "Move a control to test")}
+          ${midiStat("Last recorded", lastEvent ? lastEvent.action : "None", lastEvent ? fmtRelativeTimestamp(lastEvent.relativeMs) : "")}
           ${midiStat("FLX10 inputs", flxInputs.length ? flxInputs.length.toLocaleString() : "0", flxInputs[0]?.name || "Connect the controller, then refresh")}
           ${midiStat("Replay cursor", state.midiReplayIndex >= 0 ? `${state.midiReplayIndex + 1} / ${eventCount}` : "Idle", state.midiReplayRunning ? "Visual replay" : "")}
         </div>
@@ -1397,7 +1400,8 @@ async function connectMidi() {
     midiAccess = await navigator.requestMIDIAccess({ sysex: false });
     state.midiStatus = "connected";
     refreshMidiInputs();
-    bindMidiInputs();
+    await bindMidiInputs();
+    refreshMidiInputs();
     midiAccess.onstatechange = () => {
       refreshMidiInputs();
       bindMidiInputs();
@@ -1430,9 +1434,14 @@ function refreshMidiInputs() {
   }
 }
 
-function bindMidiInputs() {
+async function bindMidiInputs() {
   if (!midiAccess) return;
   for (const input of midiAccess.inputs.values()) {
+    try {
+      await input.open();
+    } catch (error) {
+      state.midiError = `Could not open ${input.name || "MIDI input"}: ${error?.message || error}`;
+    }
     input.onmidimessage = handleMidiMessage;
   }
 }
@@ -1457,29 +1466,42 @@ function toggleMidiRecording() {
 function startMidiRecording() {
   state.midiRecording = true;
   state.midiCopied = false;
+  state.midiMonitorCount = 0;
+  state.midiLastSeenEvent = null;
   state.midiRecordStartedAt = performance.now();
   state.midiSessionStartedAt = new Date().toISOString();
+  bindMidiInputs();
   renderDashboard();
 }
 
 function handleMidiMessage(message) {
-  if (!state.midiRecording) return;
   const input = message.currentTarget || message.target;
   const inputId = input?.id || "";
   if (state.midiSelectedInputId !== "all" && inputId !== state.midiSelectedInputId) return;
 
   const data = Array.from(message.data || []);
   const decoded = decodeMidiMessage(data);
-  const event = {
-    id: `${Date.now()}-${state.midiEvents.length}`,
-    index: state.midiEvents.length,
-    relativeMs: Math.max(0, Math.round(performance.now() - state.midiRecordStartedAt)),
+  const seenEvent = {
+    relativeMs: state.midiRecording ? Math.max(0, Math.round(performance.now() - state.midiRecordStartedAt)) : 0,
     at: new Date().toISOString(),
     inputId,
     inputName: input?.name || "Unknown MIDI input",
     data,
     dataHex: data.map((byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join(" "),
     ...decoded
+  };
+  state.midiMonitorCount += 1;
+  state.midiLastSeenEvent = seenEvent;
+
+  if (!state.midiRecording || decoded.recordable === false) {
+    scheduleMidiRender();
+    return;
+  }
+
+  const event = {
+    id: `${Date.now()}-${state.midiEvents.length}`,
+    index: state.midiEvents.length,
+    ...seenEvent
   };
 
   state.midiEvents.push(event);
@@ -1500,6 +1522,18 @@ function decodeMidiMessage(data) {
   const first = data[1] ?? 0;
   const second = data[2] ?? 0;
 
+  if (status >= 0xf8) {
+    return {
+      action: "MIDI realtime",
+      detail: `Status ${status}`,
+      type: "realtime",
+      channel: null,
+      control: null,
+      value: second,
+      recordable: false
+    };
+  }
+
   if (status >= 0xf0) {
     return {
       action: "System message",
@@ -1507,7 +1541,8 @@ function decodeMidiMessage(data) {
       type: "system",
       channel: null,
       control: null,
-      value: second
+      value: second,
+      recordable: false
     };
   }
 
