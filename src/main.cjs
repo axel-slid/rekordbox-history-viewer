@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, ipcMain, session } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, session } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const os = require("node:os");
@@ -7,6 +7,23 @@ const path = require("node:path");
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173";
 let historyCache = null;
+
+function settingsPath() {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+async function readSettings() {
+  try {
+    return JSON.parse(await fs.readFile(settingsPath(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeSettings(settings) {
+  await fs.mkdir(app.getPath("userData"), { recursive: true });
+  await fs.writeFile(settingsPath(), JSON.stringify(settings, null, 2), "utf8");
+}
 
 function getProjectRoot() {
   return path.resolve(__dirname, "..");
@@ -19,6 +36,87 @@ async function pathExists(filePath) {
   } catch {
     return false;
   }
+}
+
+async function fileStat(filePath) {
+  try {
+    return await fs.stat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+async function findMasterDb(startPath, maxDepth = 5, maxEntries = 8000) {
+  const stat = await fileStat(startPath);
+  if (!stat) return "";
+  if (stat.isFile()) {
+    return path.basename(startPath).toLowerCase() === "master.db" ? startPath : "";
+  }
+
+  const direct = path.join(startPath, "master.db");
+  if (await pathExists(direct)) return direct;
+
+  let seen = 0;
+  async function walk(dirPath, depth) {
+    if (depth > maxDepth || seen > maxEntries) return "";
+    let entries = [];
+    try {
+      entries = await fs.readdir(dirPath, { withFileTypes: true });
+    } catch {
+      return "";
+    }
+    for (const entry of entries) {
+      seen += 1;
+      if (seen > maxEntries) return "";
+      const entryPath = path.join(dirPath, entry.name);
+      if (entry.isFile() && entry.name.toLowerCase() === "master.db") return entryPath;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const found = await walk(path.join(dirPath, entry.name), depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  return walk(startPath, 0);
+}
+
+async function chooseRekordboxDatabase(event) {
+  const settings = await readSettings();
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    title: "Locate Rekordbox database",
+    message: "Choose master.db or the Rekordbox folder that contains it.",
+    defaultPath: settings.rekordboxDatabasePath || os.homedir(),
+    properties: ["openFile", "openDirectory"],
+    filters: [
+      { name: "Rekordbox database", extensions: ["db"] },
+      { name: "All files", extensions: ["*"] }
+    ]
+  });
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true, databasePath: settings.rekordboxDatabasePath || "" };
+  }
+
+  const databasePath = await findMasterDb(result.filePaths[0]);
+  if (!databasePath) {
+    throw new Error("Could not find master.db. Choose the Rekordbox database file itself, or the folder that contains it.");
+  }
+
+  const nextSettings = { ...settings, rekordboxDatabasePath: databasePath };
+  await writeSettings(nextSettings);
+  historyCache = null;
+  return { canceled: false, databasePath };
+}
+
+async function clearRekordboxDatabasePath() {
+  const settings = await readSettings();
+  delete settings.rekordboxDatabasePath;
+  await writeSettings(settings);
+  historyCache = null;
+  return { databasePath: "" };
 }
 
 function pythonBinForEnv(envDir) {
@@ -116,6 +214,7 @@ async function readRekordboxHistory({ force = false } = {}) {
 
   const scriptPath = path.join(getProjectRoot(), "scripts", "extract_rekordbox_history.py");
   const pythonPath = await ensurePythonEnvironment();
+  const settings = await readSettings();
 
   return new Promise((resolve, reject) => {
     const child = spawn(pythonPath, [scriptPath], {
@@ -124,6 +223,7 @@ async function readRekordboxHistory({ force = false } = {}) {
         ...process.env,
         PYTHONUNBUFFERED: "1",
         REKORDBOX_HISTORY_HOME: os.homedir(),
+        ...(settings.rekordboxDatabasePath ? { REKORDBOX_HISTORY_DB_PATH: settings.rekordboxDatabasePath } : {}),
         REKORDBOX_HISTORY_CACHE_PATH: path.join(app.getPath("userData"), "spotify-track-cache.json"),
         REKORDBOX_HISTORY_SKIP_SPOTIFY_LOOKUP: "0"
       }
@@ -222,6 +322,9 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("rekordbox-history:get", (_event, options = {}) => readRekordboxHistory(options));
+  ipcMain.handle("rekordbox-history:settings", () => readSettings());
+  ipcMain.handle("rekordbox-history:choose-database", (event) => chooseRekordboxDatabase(event));
+  ipcMain.handle("rekordbox-history:clear-database", () => clearRekordboxDatabasePath());
   ipcMain.handle("clipboard:write", (_event, text) => {
     clipboard.writeText(String(text || ""));
     return true;

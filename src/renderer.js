@@ -10,6 +10,7 @@ const state = {
   activeView: "sets",
   query: "",
   source: "all",
+  rekordboxDatabasePath: "",
   copiedSetSessionId: null,
   topTracksLimit: 5,
   trackSort: "recent-desc",
@@ -911,6 +912,8 @@ function renderShell() {
         <select id="source-filter" aria-label="Source filter">
           <option value="all">All sources</option>
         </select>
+        <button id="locate-rekordbox" type="button">Locate Rekordbox</button>
+        <button id="reset-rekordbox-location" type="button">Reset Location</button>
         <button id="refresh" type="button">Refresh</button>
       </div>
     </header>
@@ -925,6 +928,8 @@ function renderShell() {
     state.source = event.target.value;
     renderDashboard();
   });
+  document.querySelector("#locate-rekordbox").addEventListener("click", () => chooseRekordboxLocation());
+  document.querySelector("#reset-rekordbox-location").addEventListener("click", () => resetRekordboxLocation());
   document.querySelector("#refresh").addEventListener("click", () => loadHistory(true));
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -941,7 +946,13 @@ function renderError(error) {
   document.querySelector("#status").innerHTML = `
     <strong>Could not load Rekordbox history.</strong>
     <span>${escapeHtml(error?.message || "Unknown extractor error")}</span>
+    <div class="status-actions">
+      <button data-error-locate-rekordbox type="button">Locate Rekordbox database</button>
+      <button data-error-reset-rekordbox type="button">Use default location</button>
+    </div>
   `;
+  document.querySelector("[data-error-locate-rekordbox]")?.addEventListener("click", () => chooseRekordboxLocation());
+  document.querySelector("[data-error-reset-rekordbox]")?.addEventListener("click", () => resetRekordboxLocation());
 }
 
 function renderDashboard() {
@@ -1251,6 +1262,10 @@ function renderSummary() {
       ${stat("Played rows", state.data.summary.trackCount.toLocaleString())}
       ${stat("Unique tracks", state.data.summary.uniqueTrackCount.toLocaleString())}
       ${stat("Range", `${fmtDay(state.data.summary.oldestPlayedAt)} - ${fmtDay(state.data.summary.newestPlayedAt)}`)}
+      <div class="database-path">
+        <span>Database</span>
+        <strong>${escapeHtml(state.data.databasePath || state.rekordboxDatabasePath || "Default Rekordbox location")}</strong>
+      </div>
     </section>
   `;
 }
@@ -2543,11 +2558,43 @@ async function copyText(text) {
   textarea.remove();
 }
 
+async function loadSettings() {
+  try {
+    const settings = await window.rekordboxHistory.getSettings();
+    state.rekordboxDatabasePath = settings?.rekordboxDatabasePath || "";
+  } catch {
+    state.rekordboxDatabasePath = "";
+  }
+}
+
+async function chooseRekordboxLocation() {
+  try {
+    const result = await window.rekordboxHistory.chooseDatabase();
+    if (result?.canceled) return;
+    state.rekordboxDatabasePath = result?.databasePath || "";
+    await loadHistory(true);
+  } catch (error) {
+    renderError(error);
+  }
+}
+
+async function resetRekordboxLocation() {
+  try {
+    await window.rekordboxHistory.clearDatabase();
+    state.rekordboxDatabasePath = "";
+    await loadHistory(true);
+  } catch (error) {
+    renderError(error);
+  }
+}
+
 async function loadHistory(force = false) {
   renderShell();
   try {
+    await loadSettings();
     const data = await window.rekordboxHistory.getHistory({ force });
     state.data = data;
+    state.rekordboxDatabasePath = data.databasePath || state.rekordboxDatabasePath;
     state.selectedSessionId = data.sessions[0]?.id || null;
     renderDashboard();
   } catch (error) {

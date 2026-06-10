@@ -21,7 +21,8 @@ from typing import Any
 
 HOME = Path(os.environ.get("REKORDBOX_HISTORY_HOME") or Path.home()).expanduser()
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = HOME / "Library" / "Pioneer" / "rekordbox" / "master.db"
+DEFAULT_DB_PATH = HOME / "Library" / "Pioneer" / "rekordbox" / "master.db"
+DB_PATH = Path(os.environ.get("REKORDBOX_HISTORY_DB_PATH") or DEFAULT_DB_PATH).expanduser()
 CACHE_PATH = Path(
     os.environ.get("REKORDBOX_HISTORY_CACHE_PATH")
     or PROJECT_ROOT / "data" / "spotify-track-cache.json"

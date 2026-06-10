@@ -34,6 +34,7 @@ xattr -dr com.apple.quarantine "$HOME/Downloads/Rekordbox History Viewer.app"
 - **Paths:** start from a song, expand a rightward branching tree of historical next-track choices, see color-coded Camelot keys, and copy any path from the root song.
 - **Exports:** copy a timed setlist or download a setlist.
 - **MIDI Logger:** capture future DDJ-FLX10 MIDI actions, export the event log, and replay the action timeline visually inside the app.
+- **Setup:** choose a custom Rekordbox `master.db` location if Rekordbox data is not in the default folder.
 
 ## Screenshots
 
@@ -81,11 +82,13 @@ npm run dist
 
 ## How It Works
 
-The Electron main process runs `scripts/extract_rekordbox_history.py`, which reads the local Rekordbox database at:
+The Electron main process runs `scripts/extract_rekordbox_history.py`, which reads the local Rekordbox database. By default it looks at:
 
 ```text
 ~/Library/Pioneer/rekordbox/master.db
 ```
+
+If Rekordbox is somewhere else, click **Locate Rekordbox** in the app and choose either `master.db` directly or the folder that contains it. This is especially useful on Windows machines where the Rekordbox database is not on the default drive.
 
 The renderer groups the raw played rows into:
 
@@ -101,4 +104,4 @@ Spotify metadata is cached locally in the app's user-data folder so personal loo
 
 I originally tried to make the app recreate historical mixes automatically. Rekordbox history does not appear to save enough transition, effects, EQ, loop, or fader data to rebuild exact mixes, so the app can show the order of songs and export setlists, but it cannot recreate the actual transitions.
 
-The current extractor is designed around local Rekordbox 6 database data on macOS. Windows/Linux builds are provided for the Electron shell, but non-macOS Rekordbox library paths may need follow-up work.
+The extractor is designed around local Rekordbox 6 database data. Non-default database locations can be selected from the app with **Locate Rekordbox**.

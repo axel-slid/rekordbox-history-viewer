@@ -234,6 +234,12 @@ select:focus {
   color: #b42318;
 }
 
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -269,6 +275,31 @@ select:focus {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-path {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 10px 20px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.database-path span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.database-path strong {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
