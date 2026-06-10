@@ -46,6 +46,40 @@ async function fileStat(filePath) {
   }
 }
 
+function defaultRekordboxDatabasePath() {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Pioneer", "rekordbox", "master.db");
+  }
+  if (process.platform === "win32") {
+    return path.join(os.homedir(), "AppData", "Roaming", "Pioneer", "rekordbox", "master.db");
+  }
+  return path.join(os.homedir(), ".config", "Pioneer", "rekordbox", "master.db");
+}
+
+function normalizeUserPath(inputPath) {
+  const trimmed = String(inputPath || "").trim().replace(/^["']|["']$/g, "");
+  if (!trimmed) return "";
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+async function defaultPickerPath(settings) {
+  if (settings.rekordboxDatabasePath) {
+    const stat = await fileStat(settings.rekordboxDatabasePath);
+    if (stat) {
+      return stat.isDirectory() ? settings.rekordboxDatabasePath : path.dirname(settings.rekordboxDatabasePath);
+    }
+  }
+
+  const defaultDatabase = defaultRekordboxDatabasePath();
+  const defaultDirectory = path.dirname(defaultDatabase);
+  if (await pathExists(defaultDirectory)) return defaultDirectory;
+  return os.homedir();
+}
+
 async function findMasterDb(startPath, maxDepth = 5, maxEntries = 8000) {
   const stat = await fileStat(startPath);
   if (!stat) return "";
@@ -89,7 +123,7 @@ async function chooseRekordboxDatabase(event) {
   const result = await dialog.showOpenDialog(win, {
     title: "Locate Rekordbox database",
     message: "Choose master.db or the Rekordbox folder that contains it.",
-    defaultPath: settings.rekordboxDatabasePath || os.homedir(),
+    defaultPath: await defaultPickerPath(settings),
     properties: ["openFile", "openDirectory"],
     filters: [
       { name: "Rekordbox database", extensions: ["db"] },
@@ -109,6 +143,33 @@ async function chooseRekordboxDatabase(event) {
   await writeSettings(nextSettings);
   historyCache = null;
   return { canceled: false, databasePath };
+}
+
+async function setRekordboxDatabasePath(inputPath) {
+  const settings = await readSettings();
+  const normalizedPath = normalizeUserPath(inputPath);
+  if (!normalizedPath) {
+    throw new Error("Enter a Rekordbox database path.");
+  }
+
+  const databasePath = await findMasterDb(normalizedPath, 5, 8000);
+  if (!databasePath) {
+    throw new Error("Could not find master.db at that path. Enter master.db directly, or a folder that contains it.");
+  }
+
+  const nextSettings = { ...settings, rekordboxDatabasePath: databasePath };
+  await writeSettings(nextSettings);
+  historyCache = null;
+  return { databasePath };
+}
+
+async function useDefaultRekordboxDatabasePath() {
+  const settings = await readSettings();
+  const databasePath = defaultRekordboxDatabasePath();
+  const nextSettings = { ...settings, rekordboxDatabasePath: databasePath };
+  await writeSettings(nextSettings);
+  historyCache = null;
+  return { databasePath };
 }
 
 async function clearRekordboxDatabasePath() {
@@ -132,6 +193,8 @@ function runProcess(command, args, options = {}) {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
         ...(options.env || {})
       }
     });
@@ -222,6 +285,8 @@ async function readRekordboxHistory({ force = false } = {}) {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
         REKORDBOX_HISTORY_HOME: os.homedir(),
         ...(settings.rekordboxDatabasePath ? { REKORDBOX_HISTORY_DB_PATH: settings.rekordboxDatabasePath } : {}),
         REKORDBOX_HISTORY_CACHE_PATH: path.join(app.getPath("userData"), "spotify-track-cache.json"),
@@ -324,6 +389,8 @@ app.whenReady().then(() => {
   ipcMain.handle("rekordbox-history:get", (_event, options = {}) => readRekordboxHistory(options));
   ipcMain.handle("rekordbox-history:settings", () => readSettings());
   ipcMain.handle("rekordbox-history:choose-database", (event) => chooseRekordboxDatabase(event));
+  ipcMain.handle("rekordbox-history:set-database", (_event, inputPath) => setRekordboxDatabasePath(inputPath));
+  ipcMain.handle("rekordbox-history:use-default-database", () => useDefaultRekordboxDatabasePath());
   ipcMain.handle("rekordbox-history:clear-database", () => clearRekordboxDatabasePath());
   ipcMain.handle("clipboard:write", (_event, text) => {
     clipboard.writeText(String(text || ""));

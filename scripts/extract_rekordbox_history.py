@@ -19,6 +19,11 @@ from pathlib import Path
 from typing import Any
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 HOME = Path(os.environ.get("REKORDBOX_HISTORY_HOME") or Path.home()).expanduser()
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = HOME / "Library" / "Pioneer" / "rekordbox" / "master.db"
@@ -663,7 +668,7 @@ def main() -> int:
     try:
         with contextlib.redirect_stdout(sys.stderr):
             payload = extract()
-        print(json.dumps(payload, ensure_ascii=False))
+        print(json.dumps(payload, ensure_ascii=True))
         return 0
     except Exception as exc:
         print(str(exc), file=sys.stderr)

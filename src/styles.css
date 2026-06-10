@@ -295,13 +295,30 @@ select:focus {
   text-transform: uppercase;
 }
 
-.database-path strong {
+.database-path input {
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  outline: 0;
+  background: transparent;
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.database-path input:not(:read-only),
+.database-path input.is-editing {
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+}
+
+.database-path input:disabled {
+  opacity: 0.55;
 }
 
 .view-page {
