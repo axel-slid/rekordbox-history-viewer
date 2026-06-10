@@ -792,7 +792,7 @@ select:focus {
 
 .midi-controls {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(220px, 320px) auto;
+  grid-template-columns: minmax(240px, 1fr) minmax(220px, 300px) minmax(220px, 1fr) auto;
   align-items: end;
   gap: 18px;
   padding: 16px 0;
@@ -883,7 +883,7 @@ select:focus {
 
 .midi-live-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-bottom: 1px solid var(--line);
 }
 

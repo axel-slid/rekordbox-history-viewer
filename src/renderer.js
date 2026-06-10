@@ -37,6 +37,12 @@ const state = {
   midiEvents: loadStoredMidiEvents(),
   midiMonitorCount: 0,
   midiLastSeenEvent: null,
+  hidStatus: "idle",
+  hidError: "",
+  hidDevices: [],
+  hidSelectedDeviceId: "",
+  hidMonitorCount: 0,
+  hidLastSeenEvent: null,
   midiCopied: false,
   midiReplayRunning: false,
   midiReplayStartedAt: 0,
@@ -48,6 +54,7 @@ let midiAccess = null;
 let midiRenderTimer = null;
 let midiSaveTimer = null;
 let midiReplayTimer = null;
+let activeHidDevice = null;
 
 function loadStoredMidiEvents() {
   try {
@@ -1173,6 +1180,9 @@ function renderDashboard() {
   document.querySelector("[data-midi-connect]")?.addEventListener("click", () => {
     connectMidi();
   });
+  document.querySelector("[data-hid-connect]")?.addEventListener("click", () => {
+    connectHid();
+  });
   document.querySelector("[data-midi-record]")?.addEventListener("click", () => {
     toggleMidiRecording();
   });
@@ -1285,6 +1295,7 @@ function renderMidiLoggerView() {
           <span>${eventCount.toLocaleString()} events</span>
           ${state.midiCopied ? `<span>Copied</span>` : ""}
           <button data-midi-connect type="button">${midiAccess ? "Refresh MIDI" : "Connect MIDI"}</button>
+          <button data-hid-connect type="button">${activeHidDevice ? "Refresh HID" : "Connect HID"}</button>
           <button data-midi-record type="button">${state.midiRecording ? "Stop Logging" : "Start Logging"}</button>
         </div>
       </header>
@@ -1309,6 +1320,10 @@ function renderMidiLoggerView() {
                 .join("")}
             </select>
           </label>
+          <div class="midi-status-line">
+            <strong>${escapeHtml(hidStatusText())}</strong>
+            <span>${escapeHtml(hidStatusDetail())}</span>
+          </div>
           <div class="midi-actions">
             <button data-midi-replay type="button" ${eventCount ? "" : "disabled"}>${state.midiReplayRunning ? "Stop Replay" : "Replay Log"}</button>
             <button data-midi-copy type="button" ${eventCount ? "" : "disabled"}>Copy Log</button>
@@ -1320,7 +1335,9 @@ function renderMidiLoggerView() {
         ${
           state.midiError
             ? `<p class="midi-error">${escapeHtml(state.midiError)}</p>`
-            : `<p class="midi-note">This records future controller actions only. It can visually replay the MIDI timeline in the app; exact audio mix recreation still needs matching track playback and audio-render logic.</p>`
+            : state.hidError
+              ? `<p class="midi-error">${escapeHtml(state.hidError)}</p>`
+              : `<p class="midi-note">This records future controller actions only. Try MIDI first; if Rekordbox responds but MIDI stays at 0, click Connect HID because the FLX10 may be sending controller reports outside plain MIDI.</p>`
         }
         <div class="midi-replay">
           <div class="midi-replay-head">
@@ -1334,6 +1351,7 @@ function renderMidiLoggerView() {
         <div class="midi-live-grid">
           ${midiStat("Recording", state.midiRecording ? "On" : "Off", state.midiSessionStartedAt ? fmtDate(state.midiSessionStartedAt) : "No active session")}
           ${midiStat("Incoming MIDI", state.midiMonitorCount ? state.midiMonitorCount.toLocaleString() : "0", state.midiLastSeenEvent ? `${state.midiLastSeenEvent.action} · ${state.midiLastSeenEvent.inputName}` : "Move a control to test")}
+          ${midiStat("HID reports", state.hidMonitorCount ? state.hidMonitorCount.toLocaleString() : "0", state.hidLastSeenEvent ? `${state.hidLastSeenEvent.action} · ${state.hidLastSeenEvent.inputName}` : "Try Connect HID")}
           ${midiStat("Last recorded", lastEvent ? lastEvent.action : "None", lastEvent ? fmtRelativeTimestamp(lastEvent.relativeMs) : "")}
           ${midiStat("FLX10 inputs", flxInputs.length ? flxInputs.length.toLocaleString() : "0", flxInputs[0]?.name || "Connect the controller, then refresh")}
           ${midiStat("Replay cursor", state.midiReplayIndex >= 0 ? `${state.midiReplayIndex + 1} / ${eventCount}` : "Idle", state.midiReplayRunning ? "Visual replay" : "")}
@@ -1387,6 +1405,19 @@ function midiStatusDetail(flxInputs, selectedInput) {
   return "Connect the DDJ-FLX10, then click Connect MIDI";
 }
 
+function hidStatusText() {
+  if (state.hidStatus === "connected") return `${state.hidDevices.length || 1} HID device${state.hidDevices.length === 1 ? "" : "s"} allowed`;
+  if (state.hidStatus === "error") return "HID unavailable";
+  return "HID not connected";
+}
+
+function hidStatusDetail() {
+  if (state.hidError) return state.hidError;
+  if (activeHidDevice) return `${activeHidDevice.productName || "Controller"} opened for raw reports`;
+  if (state.hidDevices.length) return `${state.hidDevices[0].productName || "Controller"} permission found`;
+  return "Use this if Rekordbox moves but MIDI stays at 0";
+}
+
 async function connectMidi() {
   if (!navigator.requestMIDIAccess) {
     state.midiStatus = "error";
@@ -1412,6 +1443,62 @@ async function connectMidi() {
     state.midiError = error?.message || "Could not access MIDI devices.";
   }
   renderDashboard();
+}
+
+async function connectHid() {
+  if (!navigator.hid) {
+    state.hidStatus = "error";
+    state.hidError = "This Electron/Chromium build does not expose WebHID.";
+    renderDashboard();
+    return;
+  }
+
+  try {
+    state.hidError = "";
+    let devices = await navigator.hid.getDevices();
+    if (!devices.length) {
+      devices = await navigator.hid.requestDevice({ filters: [] });
+    }
+    state.hidDevices = devices.map(hidDeviceSummary);
+    activeHidDevice = devices.find(isFlx10HidDevice) || devices.find(isAlphaThetaHidDevice) || devices[0] || null;
+    if (!activeHidDevice) {
+      state.hidStatus = "error";
+      state.hidError = "No HID controller was selected.";
+      renderDashboard();
+      return;
+    }
+    if (!activeHidDevice.opened) await activeHidDevice.open();
+    activeHidDevice.removeEventListener("inputreport", handleHidInputReport);
+    activeHidDevice.addEventListener("inputreport", handleHidInputReport);
+    state.hidSelectedDeviceId = hidDeviceId(activeHidDevice);
+    state.hidStatus = "connected";
+  } catch (error) {
+    state.hidStatus = "error";
+    state.hidError = error?.message || "Could not access HID controller reports.";
+  }
+  renderDashboard();
+}
+
+function hidDeviceSummary(device) {
+  return {
+    id: hidDeviceId(device),
+    productName: device.productName || "Unknown HID device",
+    vendorId: device.vendorId || 0,
+    productId: device.productId || 0,
+    opened: Boolean(device.opened)
+  };
+}
+
+function hidDeviceId(device) {
+  return `${device.vendorId || 0}:${device.productId || 0}:${device.productName || ""}`;
+}
+
+function isFlx10HidDevice(device) {
+  return /flx\s*10|flx10|ddj-flx10|ddj flx10/i.test(device?.productName || "");
+}
+
+function isAlphaThetaHidDevice(device) {
+  return /alphatheta|pioneer/i.test(device?.productName || "");
 }
 
 function refreshMidiInputs() {
@@ -1468,6 +1555,8 @@ function startMidiRecording() {
   state.midiCopied = false;
   state.midiMonitorCount = 0;
   state.midiLastSeenEvent = null;
+  state.hidMonitorCount = 0;
+  state.hidLastSeenEvent = null;
   state.midiRecordStartedAt = performance.now();
   state.midiSessionStartedAt = new Date().toISOString();
   bindMidiInputs();
@@ -1505,6 +1594,49 @@ function handleMidiMessage(message) {
   };
 
   state.midiEvents.push(event);
+  if (state.midiEvents.length > MIDI_LOG_LIMIT) {
+    state.midiEvents.splice(0, state.midiEvents.length - MIDI_LOG_LIMIT);
+    state.midiEvents.forEach((item, index) => {
+      item.index = index;
+    });
+  }
+  scheduleMidiSave();
+  scheduleMidiRender();
+}
+
+function handleHidInputReport(event) {
+  const device = event.device || activeHidDevice;
+  const bytes = Array.from(new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength));
+  const reportId = event.reportId ?? 0;
+  const seenEvent = {
+    relativeMs: state.midiRecording ? Math.max(0, Math.round(performance.now() - state.midiRecordStartedAt)) : 0,
+    at: new Date().toISOString(),
+    inputId: hidDeviceId(device || {}),
+    inputName: device?.productName || "Unknown HID device",
+    data: bytes,
+    dataHex: bytes.map((byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join(" "),
+    action: "HID controller report",
+    detail: `Report ${reportId} · ${bytes.length} bytes`,
+    type: "hid-input-report",
+    channel: null,
+    control: reportId,
+    value: bytes[0] ?? "",
+    protocol: "hid"
+  };
+
+  state.hidMonitorCount += 1;
+  state.hidLastSeenEvent = seenEvent;
+
+  if (!state.midiRecording) {
+    scheduleMidiRender();
+    return;
+  }
+
+  state.midiEvents.push({
+    id: `${Date.now()}-${state.midiEvents.length}`,
+    index: state.midiEvents.length,
+    ...seenEvent
+  });
   if (state.midiEvents.length > MIDI_LOG_LIMIT) {
     state.midiEvents.splice(0, state.midiEvents.length - MIDI_LOG_LIMIT);
     state.midiEvents.forEach((item, index) => {

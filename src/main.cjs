@@ -182,10 +182,22 @@ function createWindow() {
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === "media" || permission === "midi" || permission === "midiSysex");
+    callback(permission === "media" || permission === "midi" || permission === "midiSysex" || permission === "hid");
   });
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === "media" || permission === "midi" || permission === "midiSysex";
+    return permission === "media" || permission === "midi" || permission === "midiSysex" || permission === "hid";
+  });
+  session.defaultSession.setDevicePermissionHandler((details) => {
+    return details.deviceType === "hid";
+  });
+  session.defaultSession.on("select-hid-device", (event, details, callback) => {
+    event.preventDefault();
+    const devices = details.deviceList || [];
+    const flx10 =
+      devices.find((device) => /flx\s*10|flx10|ddj-flx10|ddj flx10/i.test(`${device.productName || ""} ${device.name || ""}`)) ||
+      devices.find((device) => /alphatheta|pioneer/i.test(`${device.vendorName || ""} ${device.productName || ""}`)) ||
+      devices[0];
+    callback(flx10?.deviceId);
   });
 
   ipcMain.handle("toggle-fullscreen", (event) => {
