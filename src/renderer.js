@@ -1630,16 +1630,19 @@ function formatTimedSetlist(session) {
     .map((track, index) => {
       const playedTime = new Date(track.playedAt).getTime();
       const relative = index === 0 || !Number.isFinite(playedTime) || !baseTime ? 0 : playedTime - baseTime;
-      return `${fmtRelativeTimestamp(relative)} ${setlistTrackLabel(track)}`;
+      return `${fmtRelativeTimestamp(relative)} - ${setlistTrackLabel(track)}`;
     })
     .join("\n");
 }
 
 function formatBuilderSetlist(model) {
+  let elapsedSeconds = 0;
   return state.builderPath
-    .map((key, index) => {
+    .map((key) => {
       const track = model.trackMap.get(key) || { displayTitle: "Unknown track" };
-      return `${index + 1}. ${setlistTrackLabel(track)}`;
+      const line = `${fmtRelativeTimestamp(elapsedSeconds * 1000)} - ${setlistTrackLabel(track)}`;
+      elapsedSeconds += Number.isFinite(track.lengthSeconds) ? track.lengthSeconds : 0;
+      return line;
     })
     .join("\n");
 }
