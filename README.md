@@ -8,9 +8,9 @@ Turn your Rekordbox play history into a clean desktop dashboard for sets, stats,
 
 Open the latest release, then download the file for your computer:
 
-- **Mac with Apple Silicon:** `Rekordbox-History-Viewer-0.1.5-mac-apple-silicon.zip`
-- **Windows:** `Rekordbox-History-Viewer-0.1.5-windows.zip`
-- **Linux:** `Rekordbox-History-Viewer-0.1.5-linux.AppImage`
+- **Mac with Apple Silicon:** `Rekordbox-History-Viewer-0.1.6-mac-apple-silicon.zip`
+- **Windows:** `Rekordbox-History-Viewer-0.1.6-windows.zip`
+- **Linux:** `Rekordbox-History-Viewer-0.1.6-linux.AppImage`
 
 On Mac, unzip the file, then open **Rekordbox History Viewer**. If macOS says the app is damaged because it was downloaded from the internet, run this once in Terminal:
 
