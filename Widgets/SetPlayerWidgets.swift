@@ -220,6 +220,19 @@ struct LockScreenView: View {
 
             WaveStrip(context: context)
                 .frame(height: 46)
+                .overlay {
+                    // Live Activities only support button intents (no drag),
+                    // so the waveform is split into invisible tap zones —
+                    // tap anywhere on it to jump to that part of the set
+                    HStack(spacing: 0) {
+                        ForEach(0..<12, id: \.self) { i in
+                            Button(intent: SeekToFractionIntent(fraction: (Double(i) + 0.5) / 12)) {
+                                Color.clear.contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
 
             progress(context)
 

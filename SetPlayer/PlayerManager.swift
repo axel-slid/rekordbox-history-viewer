@@ -23,6 +23,14 @@ final class PlayerManager: NSObject, ObservableObject {
     private var anchorMedia: TimeInterval = 0
     private var anchorDevice: TimeInterval = 0
 
+    /// The custom Live Activity is the only playback surface. Publishing
+    /// system Now Playing info would put iOS's own media card on the lock
+    /// screen and hand it the Dynamic Island while playing, hiding ours —
+    /// so it stays off. (Flip both flags to trade back to the system player
+    /// with waveform artwork + Spotify-style expand.)
+    private let liveActivityEnabled = true
+    private let systemNowPlayingEnabled = false
+
     private var activity: Activity<SetActivityAttributes>?
     private var activityTicker: Timer?
     private var resumeAfterInterruption = false
@@ -35,6 +43,12 @@ final class PlayerManager: NSObject, ObservableObject {
         }
         PlayerIntentBridge.skip = { delta in
             await MainActor.run { PlayerManager.shared.skip(delta) }
+        }
+        PlayerIntentBridge.seekFraction = { fraction in
+            await MainActor.run {
+                let pm = PlayerManager.shared
+                pm.seek(to: fraction * pm.duration)
+            }
         }
         configureRemoteCommands()
         observeSessionNotifications()
@@ -125,12 +139,14 @@ final class PlayerManager: NSObject, ObservableObject {
         startTicker()
         startActivityTicker()
         startOrUpdateActivity()
+        Task { @MainActor in self.pushNowPlaying() }
     }
 
     /// Live Activity views are static snapshots — the waveform playhead only
     /// moves when we push a content update, so nudge it every 20s while
     /// playing (the timer text/progress bar animate on their own).
     private func startActivityTicker() {
+        guard liveActivityEnabled else { return }
         activityTicker?.invalidate()
         let t = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
             self?.startOrUpdateActivity()
@@ -156,6 +172,7 @@ final class PlayerManager: NSObject, ObservableObject {
         stopTicker()
         stopActivityTicker()
         startOrUpdateActivity()
+        Task { @MainActor in self.pushNowPlaying() }
     }
 
     func toggle() { isPlaying ? pause() : play() }
@@ -166,6 +183,7 @@ final class PlayerManager: NSObject, ObservableObject {
         displayTime = p.currentTime
         reanchor()
         startOrUpdateActivity()
+        Task { @MainActor in self.pushNowPlaying() }
     }
 
     func skip(_ delta: TimeInterval) { seek(to: liveTime() + delta) }
@@ -217,18 +235,90 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // Deliberately NOT publishing MPNowPlayingInfo: doing so makes iOS show
-    // its own media card on the lock screen and hand the Dynamic Island to the
-    // system player while audio plays, which outranks (and hides) our Live
-    // Activity. Remote commands still work — they route by audio session.
+    private var artworkCache: (id: UUID, art: MPMediaItemArtwork)?
+
+    @MainActor
+    private func pushNowPlaying() {
+        guard systemNowPlayingEnabled, let set = current else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: set.title,
+            MPMediaItemPropertyArtist: "Set Player",
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: liveTime(),
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+        if let art = artwork(for: set) {
+            info[MPMediaItemPropertyArtwork] = art
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    @MainActor
+    private func artwork(for set: DJSet) -> MPMediaItemArtwork? {
+        if let cached = artworkCache, cached.id == set.id { return cached.art }
+        guard let wf = WaveformStore.shared.waveforms[set.id] else { return nil }
+        let image = Self.renderArtwork(wf)
+        let art = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        artworkCache = (set.id, art)
+        return art
+    }
+
+    /// Square rainbow-waveform "album art" for the system player.
+    nonisolated private static func renderArtwork(_ wf: Waveform) -> UIImage {
+        let size = CGSize(width: 1024, height: 1024)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            let cg = ctx.cgContext
+            let colors = [
+                UIColor(red: 0.11, green: 0.12, blue: 0.16, alpha: 1).cgColor,
+                UIColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1).cgColor
+            ]
+            if let grad = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors as CFArray, locations: [0, 1]) {
+                cg.drawLinearGradient(
+                    grad, start: .zero,
+                    end: CGPoint(x: 0, y: size.height), options: [])
+            }
+
+            let n = 96
+            let usable = size.width * 0.86
+            let barSpace = usable / CGFloat(n)
+            let x0 = size.width * 0.07
+            let midY = size.height / 2
+            for i in 0..<n {
+                let start = i * wf.count / n
+                let end = max(start + 1, (i + 1) * wf.count / n)
+                var amp: Float = 0
+                for j in start..<min(end, wf.count) { amp = max(amp, wf.amps[j]) }
+                let h = max(8, CGFloat(amp) * size.height * 0.62)
+                UIColor(
+                    red: CGFloat(wf.r[start]),
+                    green: CGFloat(wf.g[start]),
+                    blue: CGFloat(wf.b[start]), alpha: 1).setFill()
+                let rect = CGRect(
+                    x: x0 + CGFloat(i) * barSpace,
+                    y: midY - h / 2,
+                    width: barSpace * 0.66, height: h)
+                UIBezierPath(roundedRect: rect, cornerRadius: barSpace * 0.3).fill()
+            }
+        }
+    }
 
     func refreshLiveActivity() {
         startOrUpdateActivity()
+        Task { @MainActor in
+            self.artworkCache = nil
+            self.pushNowPlaying()
+        }
     }
 
     // MARK: - Live Activity / Dynamic Island
 
     private func startOrUpdateActivity() {
+        guard liveActivityEnabled else { endActivity(); return }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard let set = current else {
             endActivity()

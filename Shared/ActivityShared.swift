@@ -30,6 +30,7 @@ struct SetActivityAttributes: ActivityAttributes {
 enum PlayerIntentBridge {
     nonisolated(unsafe) static var toggle: @Sendable () async -> Void = {}
     nonisolated(unsafe) static var skip: @Sendable (Double) async -> Void = { _ in }
+    nonisolated(unsafe) static var seekFraction: @Sendable (Double) async -> Void = { _ in }
 }
 
 struct TogglePlaybackIntent: LiveActivityIntent {
@@ -37,6 +38,23 @@ struct TogglePlaybackIntent: LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         await PlayerIntentBridge.toggle()
+        return .result()
+    }
+}
+
+struct SeekToFractionIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource { "Jump to Position" }
+
+    @Parameter(title: "Fraction")
+    var fraction: Double
+
+    init() {}
+    init(fraction: Double) {
+        self.fraction = fraction
+    }
+
+    func perform() async throws -> some IntentResult {
+        await PlayerIntentBridge.seekFraction(min(1, max(0, fraction)))
         return .result()
     }
 }
