@@ -97,6 +97,8 @@ struct LibraryView: View {
 struct SetRow: View {
     let set: DJSet
 
+    @ObservedObject private var waveStore = WaveformStore.shared
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "waveform")
@@ -110,6 +112,18 @@ struct SetRow: View {
                 Text(meta)
                     .font(.caption)
                     .foregroundStyle(Theme.textDim)
+            }
+            Spacer(minLength: 4)
+            if let wf = waveStore.waveforms[set.id], wf.bpm > 0 {
+                Text(String(format: "%.0f BPM", wf.bpm))
+                    .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Theme.accent.opacity(0.12), in: Capsule())
+            } else if waveStore.generating.contains(set.id) {
+                ProgressView()
+                    .controlSize(.small)
             }
         }
         .padding(.vertical, 3)

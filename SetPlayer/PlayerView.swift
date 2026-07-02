@@ -50,7 +50,7 @@ struct PlayerView: View {
             if player.current?.id != set.id {
                 player.load(set)
             }
-            waveStore.request(for: set, url: library.audioURL(for: set))
+            waveStore.request(for: set, url: library.audioURL(for: set), urgent: true)
         }
         .alert("Cue name", isPresented: .init(
             get: { renamingCue != nil },

@@ -51,9 +51,15 @@ final class WaveformStore: ObservableObject {
             at: cacheDir.appendingPathComponent("\(id.uuidString).json"))
     }
 
-    func request(for set: DJSet, url: URL) {
+    private var pendingQueue: [(id: UUID, url: URL)] = []
+    private var workerRunning = false
+
+    /// Loads from the on-disk cache if present, otherwise queues background
+    /// analysis. Sets analyze one at a time; `urgent` (the set being opened)
+    /// jumps to the front of the queue.
+    func request(for set: DJSet, url: URL, urgent: Bool = false) {
         let id = set.id
-        if waveforms[id] != nil || generating.contains(id) { return }
+        if waveforms[id] != nil { return }
 
         if let data = try? Data(contentsOf: cacheURL(for: id)),
            let cached = try? JSONDecoder().decode(Waveform.self, from: data) {
@@ -61,16 +67,37 @@ final class WaveformStore: ObservableObject {
             return
         }
 
+        if generating.contains(id) {
+            if urgent, let idx = pendingQueue.firstIndex(where: { $0.id == id }) {
+                pendingQueue.insert(pendingQueue.remove(at: idx), at: 0)
+                }
+            return
+        }
+
         generating.insert(id)
-        let cacheURL = cacheURL(for: id)
+        if urgent {
+            pendingQueue.insert((id, url), at: 0)
+        } else {
+            pendingQueue.append((id, url))
+        }
+        processNext()
+    }
+
+    private func processNext() {
+        guard !workerRunning, !pendingQueue.isEmpty else { return }
+        workerRunning = true
+        let job = pendingQueue.removeFirst()
+        let cacheURL = cacheURL(for: job.id)
         Task.detached(priority: .utility) {
-            let wf = Self.generate(url: url, bins: 2000)
+            let wf = Self.generate(url: job.url, bins: 2000)
             if let wf, let data = try? JSONEncoder().encode(wf) {
                 try? data.write(to: cacheURL)
             }
             await MainActor.run {
-                self.generating.remove(id)
-                if let wf { self.waveforms[id] = wf }
+                self.generating.remove(job.id)
+                if let wf { self.waveforms[job.id] = wf }
+                self.workerRunning = false
+                self.processNext()
             }
         }
     }

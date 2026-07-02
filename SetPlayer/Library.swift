@@ -20,6 +20,14 @@ final class Library: ObservableObject {
         PlayerManager.shared.library = self
     }
 
+    /// Queue background waveform + beat-grid analysis for any set that
+    /// doesn't have a saved grid yet.
+    func analyzeAll() {
+        for set in sets {
+            WaveformStore.shared.request(for: set, url: audioURL(for: set))
+        }
+    }
+
     nonisolated func audioURL(for set: DJSet) -> URL {
         setsDir.appendingPathComponent(set.fileName)
     }
@@ -48,6 +56,7 @@ final class Library: ObservableObject {
         let before = sets.count
         sets.removeAll { !FileManager.default.fileExists(atPath: audioURL(for: $0).path) }
         if before != sets.count || !files.isEmpty { save() }
+        analyzeAll()
     }
 
     func importFiles(_ urls: [URL]) {
@@ -79,6 +88,7 @@ final class Library: ObservableObject {
                 self.save()
                 self.importing = false
                 self.importError = failure
+                self.analyzeAll()
             }
         }
     }
