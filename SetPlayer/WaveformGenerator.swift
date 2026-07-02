@@ -30,6 +30,7 @@ final class WaveformStore: ObservableObject {
 
     @Published private(set) var waveforms: [UUID: Waveform] = [:]
     @Published private(set) var generating: Set<UUID> = []
+    @Published private(set) var progress: [UUID: Double] = [:]
 
     private let cacheDir: URL
 
@@ -88,13 +89,17 @@ final class WaveformStore: ObservableObject {
         workerRunning = true
         let job = pendingQueue.removeFirst()
         let cacheURL = cacheURL(for: job.id)
+        progress[job.id] = 0
         Task.detached(priority: .utility) {
-            let wf = Self.generate(url: job.url, bins: 2000)
+            let wf = Self.generate(url: job.url, bins: 2000) { pct in
+                Task { @MainActor in self.progress[job.id] = pct }
+            }
             if let wf, let data = try? JSONEncoder().encode(wf) {
                 try? data.write(to: cacheURL)
             }
             await MainActor.run {
                 self.generating.remove(job.id)
+                self.progress[job.id] = nil
                 if let wf { self.waveforms[job.id] = wf }
                 self.workerRunning = false
                 self.processNext()
@@ -107,7 +112,10 @@ final class WaveformStore: ObservableObject {
     /// Streams the file once: per display bin, peak amplitude + 6-band energy split
     /// via cascaded one-pole lowpasses (rainbow hue), and a fine-grained energy
     /// envelope (512-frame hops) for beat detection.
-    nonisolated static func generate(url: URL, bins: Int) -> Waveform? {
+    nonisolated static func generate(
+        url: URL, bins: Int,
+        onProgress: @escaping (Double) -> Void = { _ in }
+    ) -> Waveform? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let totalFrames = Int(file.length)
         guard totalFrames > 0 else { return nil }
@@ -130,6 +138,7 @@ final class WaveformStore: ObservableObject {
         envelope.reserveCapacity(totalFrames / hopSize + 1)
         var hopAcc: Float = 0
         var hopFill = 0
+        var lastReported = 0.0
 
         let chunkFrames: AVAudioFrameCount = 1 << 17
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
@@ -171,6 +180,13 @@ final class WaveformStore: ObservableObject {
                 }
             }
             frameIndex += n
+
+            // streaming pass is ~90% of the work; report whole percents only
+            let pct = 0.9 * Double(frameIndex) / Double(totalFrames)
+            if Int(pct * 100) != Int(lastReported * 100) {
+                lastReported = pct
+                onProgress(pct)
+            }
         }
 
         let peak = max(amps.max() ?? 1, 0.0001)
@@ -196,7 +212,9 @@ final class WaveformStore: ObservableObject {
             r[i] = color.x; g[i] = color.y; b[i] = color.z
         }
 
+        onProgress(0.92)
         let grid = detectBeats(envelope: envelope, rate: sampleRate / Float(hopSize))
+        onProgress(1.0)
         return Waveform(
             amps: amps, r: r, g: g, b: b,
             beats: grid?.beats ?? [], bpm: grid?.bpm ?? 0)

@@ -122,8 +122,17 @@ struct SetRow: View {
                     .padding(.vertical, 4)
                     .background(Theme.accent.opacity(0.12), in: Capsule())
             } else if waveStore.generating.contains(set.id) {
-                ProgressView()
-                    .controlSize(.small)
+                if let pct = waveStore.progress[set.id] {
+                    Text("\(Int(pct * 100))%")
+                        .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(Theme.textDim)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
         }
         .padding(.vertical, 3)

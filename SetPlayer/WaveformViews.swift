@@ -9,8 +9,11 @@ struct ScrollingWaveform: View {
     @ObservedObject private var waveStore = WaveformStore.shared
 
     @State private var scrubBase: TimeInterval?
+    @State private var pxPerSecond: CGFloat = 55
+    @State private var zoomBase: CGFloat?
 
-    private let pxPerSecond: CGFloat = 55
+    private let minZoom: CGFloat = 12
+    private let maxZoom: CGFloat = 240
 
     var body: some View {
         TimelineView(.animation) { _ in
@@ -48,22 +51,32 @@ struct ScrollingWaveform: View {
                     x += step
                 }
 
-                // beat grid ticks (every 4th beat stronger, CDJ style)
+                // beat grid, rekordbox style: white ticks per beat, red for the
+                // downbeat (first of each bar); faint full-height grid lines
+                // appear as you zoom in
                 if !wf.beats.isEmpty {
                     let from = Float(max(0, now - halfSpan))
                     let to = Float(now + halfSpan)
+                    let showGridLines = pxPerSecond > 35
                     var i = wf.firstBeat(after: from)
                     while i < wf.beats.count, wf.beats[i] <= to {
                         let bx = midX + (CGFloat(Double(wf.beats[i]) - now)) * pxPerSecond
-                        let strong = i % 4 == 0
-                        let tickH: CGFloat = strong ? 12 : 7
-                        let alpha: Double = strong ? 0.85 : 0.4
+                        let downbeat = i % 4 == 0
+                        let tickColor: Color = downbeat ? Theme.playhead : .white
+                        let tickH: CGFloat = downbeat ? 13 : 8
+                        let tickW: CGFloat = downbeat ? 2 : 1.2
+
+                        if showGridLines {
+                            ctx.fill(
+                                Path(CGRect(x: bx - 0.5, y: 0, width: 1, height: size.height)),
+                                with: .color(tickColor.opacity(downbeat ? 0.22 : 0.10)))
+                        }
                         ctx.fill(
-                            Path(CGRect(x: bx - 0.5, y: 0, width: strong ? 1.6 : 1, height: tickH)),
-                            with: .color(.white.opacity(alpha)))
+                            Path(CGRect(x: bx - tickW / 2, y: 0, width: tickW, height: tickH)),
+                            with: .color(tickColor.opacity(downbeat ? 0.95 : 0.6)))
                         ctx.fill(
-                            Path(CGRect(x: bx - 0.5, y: size.height - tickH, width: strong ? 1.6 : 1, height: tickH)),
-                            with: .color(.white.opacity(alpha)))
+                            Path(CGRect(x: bx - tickW / 2, y: size.height - tickH, width: tickW, height: tickH)),
+                            with: .color(tickColor.opacity(downbeat ? 0.95 : 0.6)))
                         i += 1
                     }
                 }
@@ -97,25 +110,48 @@ struct ScrollingWaveform: View {
             }
             .overlay {
                 if waveStore.generating.contains(set.id) {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text("Analyzing waveform & beat grid…")
-                            .font(.caption)
+                    VStack(spacing: 10) {
+                        ProgressView(value: waveStore.progress[set.id] ?? 0)
+                            .frame(width: 160)
+                        Text("Analyzing… \(Int((waveStore.progress[set.id] ?? 0) * 100))%")
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
                     }
                 }
+            }
+            .overlay(alignment: .topTrailing) {
+                Text(zoomLabel)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.35), in: Capsule())
+                    .padding(6)
             }
         }
         .gesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { value in
+                    guard zoomBase == nil else { scrubBase = nil; return }
                     if scrubBase == nil { scrubBase = player.liveTime() }
                     if let base = scrubBase {
                         player.seek(to: base - Double(value.translation.width / pxPerSecond))
                     }
                 }
                 .onEnded { _ in scrubBase = nil }
+                .simultaneously(
+                    with: MagnificationGesture()
+                        .onChanged { scale in
+                            if zoomBase == nil { zoomBase = pxPerSecond }
+                            pxPerSecond = min(maxZoom, max(minZoom, (zoomBase ?? pxPerSecond) * scale))
+                        }
+                        .onEnded { _ in zoomBase = nil }
+                )
         )
+    }
+
+    private var zoomLabel: String {
+        String(format: "%.0f px/s", pxPerSecond)
     }
 }
 
