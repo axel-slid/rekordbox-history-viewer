@@ -86,15 +86,6 @@ private func elapsed(_ context: ActivityViewContext<SetActivityAttributes>) -> T
     return Text(format(context.state.position))
 }
 
-/// Remaining time; counts down automatically while playing.
-private func remaining(_ context: ActivityViewContext<SetActivityAttributes>) -> Text {
-    if context.state.isPlaying {
-        let end = context.state.startDate.addingTimeInterval(context.attributes.duration)
-        return Text("-") + Text(timerInterval: context.state.startDate...end, countsDown: true, showsHours: true)
-    }
-    return Text("-" + format(max(0, context.attributes.duration - context.state.position)))
-}
-
 @ViewBuilder
 private func progress(_ context: ActivityViewContext<SetActivityAttributes>) -> some View {
     if context.state.isPlaying {
@@ -232,7 +223,8 @@ struct LockScreenView: View {
 
             progress(context)
 
-            HStack(spacing: 28) {
+            HStack(spacing: 40) {
+                Spacer()
                 Button(intent: SkipBackIntent()) {
                     Image(systemName: "gobackward.15")
                         .font(.system(size: 21, weight: .medium))
@@ -252,9 +244,6 @@ struct LockScreenView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                remaining(context)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(dimText)
             }
         }
         .padding(.horizontal, 14)

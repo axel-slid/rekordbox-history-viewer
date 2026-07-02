@@ -95,7 +95,6 @@ final class PlayerManager: NSObject, ObservableObject {
             duration = p.duration
             displayTime = 0
             loadError = nil
-            pushStaticNowPlaying()
             if autoplay {
                 play()
             } else {
@@ -125,7 +124,6 @@ final class PlayerManager: NSObject, ObservableObject {
         reanchor()
         startTicker()
         startActivityTicker()
-        pushDynamicNowPlaying()
         startOrUpdateActivity()
     }
 
@@ -157,7 +155,6 @@ final class PlayerManager: NSObject, ObservableObject {
         isPlaying = false
         stopTicker()
         stopActivityTicker()
-        pushDynamicNowPlaying()
         startOrUpdateActivity()
     }
 
@@ -168,7 +165,6 @@ final class PlayerManager: NSObject, ObservableObject {
         p.currentTime = max(0, min(t, duration - 0.05))
         displayTime = p.currentTime
         reanchor()
-        pushDynamicNowPlaying()
         startOrUpdateActivity()
     }
 
@@ -221,24 +217,10 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    private func pushStaticNowPlaying() {
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPMediaItemPropertyTitle: current?.title ?? "Set",
-            MPMediaItemPropertyArtist: "Set Player",
-            MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0,
-            MPNowPlayingInfoPropertyPlaybackRate: 0.0
-        ]
-    }
-
-    private func pushDynamicNowPlaying() {
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = current?.title ?? "Set"
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = liveTime()
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
-        info[MPMediaItemPropertyPlaybackDuration] = duration
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
+    // Deliberately NOT publishing MPNowPlayingInfo: doing so makes iOS show
+    // its own media card on the lock screen and hand the Dynamic Island to the
+    // system player while audio plays, which outranks (and hides) our Live
+    // Activity. Remote commands still work — they route by audio session.
 
     func refreshLiveActivity() {
         startOrUpdateActivity()
@@ -383,7 +365,6 @@ extension PlayerManager: AVAudioPlayerDelegate {
         displayTime = duration
         stopTicker()
         stopActivityTicker()
-        pushDynamicNowPlaying()
         endActivity()
     }
 }
