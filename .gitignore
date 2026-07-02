@@ -1,0 +1,3 @@
+build/dd/
+*.xcodeproj
+xcuserdata/
