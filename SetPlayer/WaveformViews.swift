@@ -31,24 +31,26 @@ struct ScrollingWaveform: View {
                     Path(CGRect(x: 0, y: midY - 0.5, width: size.width, height: 1)),
                     with: .color(.white.opacity(0.07)))
 
-                // waveform bars
-                let barW: CGFloat = 2
+                // waveform bars, anchored to the audio timeline (not pixel
+                // columns) so they slide smoothly and uniformly with playback
                 let step: CGFloat = 3
-                var x: CGFloat = 0
-                while x < size.width {
-                    let t = now + Double((x - midX) / pxPerSecond)
-                    if t >= 0 && t < player.duration {
-                        let bin = min(wf.count - 1, max(0, Int(t / binDur)))
-                        let amp = CGFloat(wf.amps[bin])
-                        let h = max(2, amp * size.height * 0.88)
-                        let color = Color(
-                            red: Double(wf.r[bin]),
-                            green: Double(wf.g[bin]),
-                            blue: Double(wf.b[bin]))
-                        let rect = CGRect(x: x, y: midY - h / 2, width: barW, height: h)
-                        ctx.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
-                    }
-                    x += step
+                let barW: CGFloat = 2
+                let secPerBar = Double(step / pxPerSecond)
+                var t = floor((Double(now) - halfSpan) / secPerBar) * secPerBar
+                let tEnd = Double(now) + halfSpan + secPerBar
+                while t < tEnd {
+                    defer { t += secPerBar }
+                    guard t >= 0, t < player.duration else { continue }
+                    let x = midX + CGFloat(t - now) * pxPerSecond
+                    let bin = min(wf.count - 1, max(0, Int(t / binDur)))
+                    let amp = CGFloat(wf.amps[bin])
+                    let h = max(2, amp * size.height * 0.88)
+                    let color = Color(
+                        red: Double(wf.r[bin]),
+                        green: Double(wf.g[bin]),
+                        blue: Double(wf.b[bin]))
+                    let rect = CGRect(x: x - barW / 2, y: midY - h / 2, width: barW, height: h)
+                    ctx.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
                 }
 
                 // beat grid, rekordbox style: white ticks per beat, red for the

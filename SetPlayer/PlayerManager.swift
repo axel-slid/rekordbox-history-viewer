@@ -16,6 +16,12 @@ final class PlayerManager: NSObject, ObservableObject {
     private var player: AVAudioPlayer?
     private var ticker: Timer?
 
+    // AVAudioPlayer.currentTime quantizes to buffer boundaries, which makes
+    // waveform scrolling stutter. Anchor media time to the smooth audio
+    // hardware clock and interpolate while playing.
+    private var anchorMedia: TimeInterval = 0
+    private var anchorDevice: TimeInterval = 0
+
     private override init() {
         super.init()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
@@ -54,8 +60,15 @@ final class PlayerManager: NSObject, ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(true)
         p.play()
         isPlaying = true
+        reanchor()
         startTicker()
         pushDynamicNowPlaying()
+    }
+
+    private func reanchor() {
+        guard let p = player else { return }
+        anchorMedia = p.currentTime
+        anchorDevice = p.deviceCurrentTime
     }
 
     func pause() {
@@ -71,19 +84,29 @@ final class PlayerManager: NSObject, ObservableObject {
         guard let p = player else { return }
         p.currentTime = max(0, min(t, duration - 0.05))
         displayTime = p.currentTime
+        reanchor()
         pushDynamicNowPlaying()
     }
 
     func skip(_ delta: TimeInterval) { seek(to: liveTime() + delta) }
 
-    /// Sample-accurate time for the waveform's 60fps redraws.
-    func liveTime() -> TimeInterval { player?.currentTime ?? displayTime }
+    /// Smooth time for the waveform's per-frame redraws: interpolated from
+    /// the audio hardware clock while playing.
+    func liveTime() -> TimeInterval {
+        guard let p = player else { return displayTime }
+        guard isPlaying else { return p.currentTime }
+        return min(anchorMedia + (p.deviceCurrentTime - anchorDevice), duration)
+    }
 
     private func startTicker() {
         stopTicker()
         let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self, let p = self.player else { return }
             self.displayTime = p.currentTime
+            // catch clock drift or route changes; small jitter is expected
+            if self.isPlaying, abs(self.liveTime() - p.currentTime) > 0.3 {
+                self.reanchor()
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         ticker = t

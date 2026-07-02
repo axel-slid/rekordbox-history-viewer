@@ -23,7 +23,8 @@ targets:
       path: SetPlayer/Info.plist
       properties:
         CFBundleDisplayName: Set Player
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, processing]
+        BGTaskSchedulerPermittedIdentifiers: [com.alexdils.setplayer.analyze]
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

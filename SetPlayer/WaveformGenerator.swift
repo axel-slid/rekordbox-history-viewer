@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// Downsampled waveform with rainbow spectral coloring (bass = red, highs = violet)
 /// plus a detected beat grid and BPM.
@@ -32,24 +33,30 @@ final class WaveformStore: ObservableObject {
     @Published private(set) var generating: Set<UUID> = []
     @Published private(set) var progress: [UUID: Double] = [:]
 
-    private let cacheDir: URL
-
     private init() {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        cacheDir = docs.appendingPathComponent("waveforms", isDirectory: true)
-        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: Self.cacheDir, withIntermediateDirectories: true)
+    }
+
+    nonisolated static var cacheDir: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("waveforms", isDirectory: true)
     }
 
     // v2: rainbow colors + beat grid (older caches are ignored and regenerated)
-    private func cacheURL(for id: UUID) -> URL {
+    nonisolated static func diskCacheURL(for id: UUID) -> URL {
         cacheDir.appendingPathComponent("\(id.uuidString)-v2.json")
+    }
+
+    private func cacheURL(for id: UUID) -> URL {
+        Self.diskCacheURL(for: id)
     }
 
     func removeCache(for id: UUID) {
         waveforms[id] = nil
         try? FileManager.default.removeItem(at: cacheURL(for: id))
         try? FileManager.default.removeItem(
-            at: cacheDir.appendingPathComponent("\(id.uuidString).json"))
+            at: Self.cacheDir.appendingPathComponent("\(id.uuidString).json"))
     }
 
     private var pendingQueue: [(id: UUID, url: URL)] = []
@@ -90,6 +97,14 @@ final class WaveformStore: ObservableObject {
         let job = pendingQueue.removeFirst()
         let cacheURL = cacheURL(for: job.id)
         progress[job.id] = 0
+
+        // grace time so the in-flight set can finish after the app is closed
+        var graceTask: UIBackgroundTaskIdentifier = .invalid
+        graceTask = UIApplication.shared.beginBackgroundTask(withName: "waveform-analysis") {
+            UIApplication.shared.endBackgroundTask(graceTask)
+            graceTask = .invalid
+        }
+
         Task.detached(priority: .utility) {
             let wf = Self.generate(url: job.url, bins: 2000) { pct in
                 Task { @MainActor in self.progress[job.id] = pct }
@@ -103,6 +118,9 @@ final class WaveformStore: ObservableObject {
                 if let wf { self.waveforms[job.id] = wf }
                 self.workerRunning = false
                 self.processNext()
+                if graceTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(graceTask)
+                }
             }
         }
     }
