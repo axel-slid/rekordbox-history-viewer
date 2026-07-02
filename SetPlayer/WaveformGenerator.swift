@@ -1,15 +1,27 @@
 import AVFoundation
 import Foundation
 
-/// Downsampled waveform with per-bin color, rekordbox RGB style:
-/// low frequencies pull blue, mids amber, highs white.
+/// Downsampled waveform with rainbow spectral coloring (bass = red, highs = violet)
+/// plus a detected beat grid and BPM.
 struct Waveform: Codable {
     var amps: [Float]
     var r: [Float]
     var g: [Float]
     var b: [Float]
+    var beats: [Float] = []
+    var bpm: Float = 0
 
     var count: Int { amps.count }
+
+    /// index of first beat at or after time t (beats are sorted)
+    func firstBeat(after t: Float) -> Int {
+        var lo = 0, hi = beats.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if beats[mid] < t { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
 }
 
 @MainActor
@@ -27,13 +39,16 @@ final class WaveformStore: ObservableObject {
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
     }
 
+    // v2: rainbow colors + beat grid (older caches are ignored and regenerated)
     private func cacheURL(for id: UUID) -> URL {
-        cacheDir.appendingPathComponent("\(id.uuidString).json")
+        cacheDir.appendingPathComponent("\(id.uuidString)-v2.json")
     }
 
     func removeCache(for id: UUID) {
         waveforms[id] = nil
         try? FileManager.default.removeItem(at: cacheURL(for: id))
+        try? FileManager.default.removeItem(
+            at: cacheDir.appendingPathComponent("\(id.uuidString).json"))
     }
 
     func request(for set: DJSet, url: URL) {
@@ -49,7 +64,7 @@ final class WaveformStore: ObservableObject {
         generating.insert(id)
         let cacheURL = cacheURL(for: id)
         Task.detached(priority: .utility) {
-            let wf = Self.generate(url: url, bins: 1600)
+            let wf = Self.generate(url: url, bins: 2000)
             if let wf, let data = try? JSONEncoder().encode(wf) {
                 try? data.write(to: cacheURL)
             }
@@ -60,8 +75,11 @@ final class WaveformStore: ObservableObject {
         }
     }
 
-    /// Streams the file once. Per display bin: peak amplitude plus rough
-    /// low/mid/high energy split from one-pole filters (cheap but convincing).
+    // MARK: - analysis
+
+    /// Streams the file once: per display bin, peak amplitude + 6-band energy split
+    /// via cascaded one-pole lowpasses (rainbow hue), and a fine-grained energy
+    /// envelope (512-frame hops) for beat detection.
     nonisolated static func generate(url: URL, bins: Int) -> Waveform? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let totalFrames = Int(file.length)
@@ -73,15 +91,18 @@ final class WaveformStore: ObservableObject {
         let binCount = min(bins, totalFrames / framesPerBin)
 
         var amps = [Float](repeating: 0, count: binCount)
-        var lowE = [Float](repeating: 0, count: binCount)
-        var midE = [Float](repeating: 0, count: binCount)
-        var highE = [Float](repeating: 0, count: binCount)
+        // 6 bands: <80, 80-200, 200-500, 500-1500, 1500-4000, >4000 Hz
+        let cutoffs: [Float] = [80, 200, 500, 1500, 4000]
+        let alphas = cutoffs.map { 1 - exp(-2 * Float.pi * $0 / sampleRate) }
+        var lp = [Float](repeating: 0, count: 5)
+        var bandE = [[Float]](repeating: [Float](repeating: 0, count: binCount), count: 6)
 
-        // one-pole coefficients: low < ~200 Hz, high > ~4 kHz
-        let aLow = 1 - exp(-2 * Float.pi * 200 / sampleRate)
-        let aHigh = 1 - exp(-2 * Float.pi * 4000 / sampleRate)
-        var lp: Float = 0
-        var lp4k: Float = 0
+        // beat-detection envelope: one value per 512-frame hop
+        let hopSize = 512
+        var envelope: [Float] = []
+        envelope.reserveCapacity(totalFrames / hopSize + 1)
+        var hopAcc: Float = 0
+        var hopFill = 0
 
         let chunkFrames: AVAudioFrameCount = 1 << 17
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
@@ -95,37 +116,173 @@ final class WaveformStore: ObservableObject {
 
             for i in 0..<n {
                 let x = ch[i]
-                lp += aLow * (x - lp)
-                lp4k += aHigh * (x - lp4k)
-                let high = x - lp4k
-                let mid = lp4k - lp
+                for k in 0..<5 { lp[k] += alphas[k] * (x - lp[k]) }
 
                 let bin = min(binCount - 1, (frameIndex + i) / framesPerBin)
                 let ax = abs(x)
                 if ax > amps[bin] { amps[bin] = ax }
-                lowE[bin] += lp * lp
-                midE[bin] += mid * mid
-                highE[bin] += high * high
+
+                let b0 = lp[0]
+                let b1 = lp[1] - lp[0]
+                let b2 = lp[2] - lp[1]
+                let b3 = lp[3] - lp[2]
+                let b4 = lp[4] - lp[3]
+                let b5 = x - lp[4]
+                bandE[0][bin] += b0 * b0
+                bandE[1][bin] += b1 * b1
+                bandE[2][bin] += b2 * b2
+                bandE[3][bin] += b3 * b3
+                bandE[4][bin] += b4 * b4
+                bandE[5][bin] += b5 * b5
+
+                hopAcc += x * x
+                hopFill += 1
+                if hopFill == hopSize {
+                    envelope.append(sqrt(hopAcc / Float(hopSize)))
+                    hopAcc = 0
+                    hopFill = 0
+                }
             }
             frameIndex += n
         }
 
-        // normalize amplitude to the set's own peak
         let peak = max(amps.max() ?? 1, 0.0001)
         for i in 0..<binCount { amps[i] = min(1, amps[i] / peak) }
 
+        // rainbow: blend band hues weighted by (boosted) energy share
+        let hues: [Float] = [0, 30, 55, 120, 200, 275]
+        let boost: [Float] = [1.0, 1.0, 1.6, 2.2, 3.2, 4.5]
         var r = [Float](repeating: 0, count: binCount)
         var g = [Float](repeating: 0, count: binCount)
         var b = [Float](repeating: 0, count: binCount)
         for i in 0..<binCount {
-            // high band gets a boost so hats/air read as white like rekordbox
-            let e = (low: lowE[i], mid: midE[i], high: highE[i] * 3)
-            let total = max(e.low + e.mid + e.high, 1e-9)
-            let wl = e.low / total, wm = e.mid / total, wh = e.high / total
-            let color = Theme.waveLow * wl + Theme.waveMid * wm + Theme.waveHigh * wh
+            var total: Float = 0
+            var hue: Float = 0
+            for k in 0..<6 {
+                let w = bandE[k][i] * boost[k]
+                total += w
+                hue += w * hues[k]
+            }
+            let color = total > 1e-9
+                ? hsv(hue / total, 0.9, 1.0)
+                : SIMD3<Float>(0.3, 0.3, 0.35)
             r[i] = color.x; g[i] = color.y; b[i] = color.z
         }
 
-        return Waveform(amps: amps, r: r, g: g, b: b)
+        let grid = detectBeats(envelope: envelope, rate: sampleRate / Float(hopSize))
+        return Waveform(
+            amps: amps, r: r, g: g, b: b,
+            beats: grid?.beats ?? [], bpm: grid?.bpm ?? 0)
+    }
+
+    nonisolated static func hsv(_ h: Float, _ s: Float, _ v: Float) -> SIMD3<Float> {
+        let c = v * s
+        let hp = (h.truncatingRemainder(dividingBy: 360)) / 60
+        let x = c * (1 - abs(hp.truncatingRemainder(dividingBy: 2) - 1))
+        let m = v - c
+        let rgb: SIMD3<Float>
+        switch Int(hp) {
+        case 0: rgb = SIMD3(c, x, 0)
+        case 1: rgb = SIMD3(x, c, 0)
+        case 2: rgb = SIMD3(0, c, x)
+        case 3: rgb = SIMD3(0, x, c)
+        case 4: rgb = SIMD3(x, 0, c)
+        default: rgb = SIMD3(c, 0, x)
+        }
+        return rgb + SIMD3(m, m, m)
+    }
+
+    // MARK: - beat grid
+
+    private struct BeatGrid {
+        let bpm: Float
+        let beats: [Float]
+    }
+
+    /// Onset flux + windowed autocorrelation for local tempo, then forward
+    /// beat tracking that snaps each predicted beat to the nearest onset peak.
+    nonisolated private static func detectBeats(envelope: [Float], rate: Float) -> BeatGrid? {
+        let n = envelope.count
+        guard n > Int(rate * 20) else { return nil }
+
+        var onset = [Float](repeating: 0, count: n)
+        for i in 1..<n { onset[i] = max(0, envelope[i] - envelope[i - 1]) }
+
+        // local tempo every 8s over 16s windows, 70–190 BPM
+        let win = Int(rate * 16)
+        let hop = Int(rate * 8)
+        let minLag = max(2, Int(rate * 60 / 190))
+        let maxLag = Int(rate * 60 / 70)
+        guard maxLag < win else { return nil }
+
+        var periods: [(center: Int, lag: Float)] = []
+        var start = 0
+        while start + win <= n {
+            var bestLag = 0
+            var bestScore: Float = 0
+            var scores = [Float](repeating: 0, count: maxLag + 1)
+            for lag in minLag...maxLag {
+                var s: Float = 0
+                var i = start
+                let end = start + win - lag
+                while i < end {
+                    s += onset[i] * onset[i + lag]
+                    i += 1
+                }
+                let score = s / Float(win - lag)
+                scores[lag] = score
+                if score > bestScore { bestScore = score; bestLag = lag }
+            }
+            if bestLag > minLag && bestLag < maxLag && bestScore > 0 {
+                // parabolic refinement for sub-sample tempo accuracy
+                let y0 = scores[bestLag - 1], y1 = scores[bestLag], y2 = scores[bestLag + 1]
+                let denom = y0 - 2 * y1 + y2
+                let offset = denom != 0 ? 0.5 * (y0 - y2) / denom : 0
+                periods.append((start + win / 2, Float(bestLag) + offset))
+            }
+            start += hop
+        }
+        guard !periods.isEmpty else { return nil }
+
+        let sortedLags = periods.map(\.lag).sorted()
+        let medianLag = sortedLags[sortedLags.count / 2]
+        let bpm = 60 * rate / medianLag
+
+        func localLag(at index: Int) -> Float {
+            var best = periods[0].lag
+            var bestDist = Int.max
+            for p in periods {
+                let d = abs(p.center - index)
+                if d < bestDist { bestDist = d; best = p.lag }
+            }
+            return best
+        }
+
+        // anchor on the strongest onset in the first 8 seconds
+        let anchorWindow = min(n, Int(rate * 8))
+        var cursor = Float((0..<anchorWindow).max(by: { onset[$0] < onset[$1] }) ?? 0)
+
+        var beats: [Float] = []
+        beats.reserveCapacity(n / Int(medianLag))
+        while cursor < Float(n) {
+            beats.append(cursor / rate)
+            let lag = localLag(at: Int(cursor))
+            var next = cursor + lag
+            let radius = Int(lag * 0.12)
+            let center = Int(next)
+            if radius > 0, center - radius > 0, center + radius < n {
+                var bestIdx = center
+                var bestVal: Float = -1
+                for j in (center - radius)...(center + radius) where onset[j] > bestVal {
+                    bestVal = onset[j]
+                    bestIdx = j
+                }
+                next = Float(bestIdx)
+            }
+            if next <= cursor { break }
+            cursor = next
+        }
+        guard beats.count > 4 else { return nil }
+        return BeatGrid(bpm: bpm, beats: beats)
     }
 }

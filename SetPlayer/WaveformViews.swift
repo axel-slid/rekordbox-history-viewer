@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// rekordbox-style scrolling waveform: playhead fixed at center, audio scrolls past.
-/// Drag horizontally to scrub.
+/// Scrolling waveform, playhead fixed at center, beat-grid ticks along the top
+/// and bottom edges. Drag horizontally to scrub.
 struct ScrollingWaveform: View {
     let set: DJSet
 
@@ -21,7 +21,14 @@ struct ScrollingWaveform: View {
                 let midY = size.height / 2
                 let now = player.liveTime()
                 let binDur = player.duration / Double(wf.count)
+                let halfSpan = Double(midX / pxPerSecond)
 
+                // faint center line
+                ctx.fill(
+                    Path(CGRect(x: 0, y: midY - 0.5, width: size.width, height: 1)),
+                    with: .color(.white.opacity(0.07)))
+
+                // waveform bars
                 let barW: CGFloat = 2
                 let step: CGFloat = 3
                 var x: CGFloat = 0
@@ -30,7 +37,7 @@ struct ScrollingWaveform: View {
                     if t >= 0 && t < player.duration {
                         let bin = min(wf.count - 1, max(0, Int(t / binDur)))
                         let amp = CGFloat(wf.amps[bin])
-                        let h = max(2, amp * size.height * 0.92)
+                        let h = max(2, amp * size.height * 0.88)
                         let color = Color(
                             red: Double(wf.r[bin]),
                             green: Double(wf.g[bin]),
@@ -39,6 +46,26 @@ struct ScrollingWaveform: View {
                         ctx.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
                     }
                     x += step
+                }
+
+                // beat grid ticks (every 4th beat stronger, CDJ style)
+                if !wf.beats.isEmpty {
+                    let from = Float(max(0, now - halfSpan))
+                    let to = Float(now + halfSpan)
+                    var i = wf.firstBeat(after: from)
+                    while i < wf.beats.count, wf.beats[i] <= to {
+                        let bx = midX + (CGFloat(Double(wf.beats[i]) - now)) * pxPerSecond
+                        let strong = i % 4 == 0
+                        let tickH: CGFloat = strong ? 12 : 7
+                        let alpha: Double = strong ? 0.85 : 0.4
+                        ctx.fill(
+                            Path(CGRect(x: bx - 0.5, y: 0, width: strong ? 1.6 : 1, height: tickH)),
+                            with: .color(.white.opacity(alpha)))
+                        ctx.fill(
+                            Path(CGRect(x: bx - 0.5, y: size.height - tickH, width: strong ? 1.6 : 1, height: tickH)),
+                            with: .color(.white.opacity(alpha)))
+                        i += 1
+                    }
                 }
 
                 // annotation markers
@@ -51,22 +78,28 @@ struct ScrollingWaveform: View {
                         with: .color(color.opacity(0.9)))
                     var flag = Path()
                     flag.move(to: CGPoint(x: cx, y: 0))
-                    flag.addLine(to: CGPoint(x: cx + 10, y: 0))
-                    flag.addLine(to: CGPoint(x: cx, y: 10))
+                    flag.addLine(to: CGPoint(x: cx + 11, y: 0))
+                    flag.addLine(to: CGPoint(x: cx, y: 11))
                     flag.closeSubpath()
                     ctx.fill(flag, with: .color(color))
                 }
 
-                // center playhead
+                // center playhead with cap
                 ctx.fill(
                     Path(CGRect(x: midX - 1, y: 0, width: 2, height: size.height)),
                     with: .color(Theme.playhead))
+                var cap = Path()
+                cap.move(to: CGPoint(x: midX - 6, y: 0))
+                cap.addLine(to: CGPoint(x: midX + 6, y: 0))
+                cap.addLine(to: CGPoint(x: midX, y: 7))
+                cap.closeSubpath()
+                ctx.fill(cap, with: .color(Theme.playhead))
             }
             .overlay {
                 if waveStore.generating.contains(set.id) {
                     VStack(spacing: 8) {
                         ProgressView()
-                        Text("Analyzing waveform…")
+                        Text("Analyzing waveform & beat grid…")
                             .font(.caption)
                             .foregroundStyle(Theme.textDim)
                     }
@@ -86,7 +119,7 @@ struct ScrollingWaveform: View {
     }
 }
 
-/// Full-set overview: tap or drag anywhere to jump.
+/// Full-set overview in rainbow color: tap or drag anywhere to jump.
 struct OverviewWaveform: View {
     let set: DJSet
 
@@ -109,10 +142,13 @@ struct OverviewWaveform: View {
                         let bin = min(wf.count - 1, Int(CGFloat(wf.count) * x / size.width))
                         let h = max(1.5, CGFloat(wf.amps[bin]) * size.height * 0.85)
                         let played = x <= playedX
-                        let color: Color = played ? Theme.accent : Color(hex: 0x3A404D)
+                        let color = Color(
+                            red: Double(wf.r[bin]),
+                            green: Double(wf.g[bin]),
+                            blue: Double(wf.b[bin]))
                         ctx.fill(
                             Path(CGRect(x: x, y: midY - h / 2, width: 1.4, height: h)),
-                            with: .color(color))
+                            with: .color(played ? color : color.opacity(0.28)))
                         x += step
                     }
 

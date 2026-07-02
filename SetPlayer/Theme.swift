@@ -16,12 +16,9 @@ enum Theme {
     static let panel = Color(hex: 0x1C1F26)
     static let panelBorder = Color(hex: 0x2A2E38)
     static let accent = Color(hex: 0x00AEEF)
+    static let warm = Color(hex: 0xE8641E)
     static let textDim = Color(hex: 0x8A919E)
     static let playhead = Color(hex: 0xFF3B30)
-
-    static let waveLow = SIMD3<Float>(0.10, 0.36, 1.00)   // deep blue
-    static let waveMid = SIMD3<Float>(1.00, 0.62, 0.13)   // amber
-    static let waveHigh = SIMD3<Float>(1.00, 1.00, 1.00)  // white
 
     /// hot-cue palette for annotations
     static let cueColors: [Color] = [

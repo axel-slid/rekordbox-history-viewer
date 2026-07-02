@@ -19,20 +19,25 @@ struct PlayerView: View {
             Theme.background.ignoresSafeArea()
 
             if let set {
-                VStack(spacing: 14) {
+                VStack(spacing: 12) {
+                    infoBar(set)
+
                     ScrollingWaveform(set: set)
-                        .frame(height: 150)
+                        .frame(height: 158)
                         .background(Theme.panel)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.panelBorder))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.panelBorder))
 
                     OverviewWaveform(set: set)
-                        .frame(height: 44)
+                        .frame(height: 46)
                         .background(Theme.panel)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.panelBorder))
 
-                    timeRow
                     transport
+
+                    markTrackRow(set)
+
                     cueList(set)
                 }
                 .padding(14)
@@ -74,79 +79,140 @@ struct PlayerView: View {
         }
     }
 
-    private var timeRow: some View {
+    // CDJ-style readout: elapsed · BPM · remaining
+    private func infoBar(_ set: DJSet) -> some View {
         HStack {
-            Text(formatTime(player.displayTime))
-                .font(.system(.title3, design: .monospaced).weight(.medium))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TIME")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textDim)
+                    .kerning(1.2)
+                Text(formatTime(player.displayTime))
+                    .font(.system(size: 26, weight: .medium, design: .monospaced))
+            }
             Spacer()
-            Text(formatTime(player.duration))
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(Theme.textDim)
+            VStack(spacing: 2) {
+                Text("BPM")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textDim)
+                    .kerning(1.2)
+                Text(bpmLabel)
+                    .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("REMAIN")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textDim)
+                    .kerning(1.2)
+                Text("-" + formatTime(max(0, player.duration - player.displayTime)))
+                    .font(.system(size: 26, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.textDim)
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.panelBorder))
+    }
+
+    private var bpmLabel: String {
+        guard let wf = waveStore.waveforms[setID], wf.bpm > 0 else { return "––.–" }
+        return String(format: "%.1f", wf.bpm)
     }
 
     private var transport: some View {
-        HStack(spacing: 34) {
-            Button { player.skip(-15) } label: {
-                Image(systemName: "gobackward.15").font(.system(size: 30))
-            }
+        HStack(spacing: 26) {
+            transportButton("gobackward.15") { player.skip(-15) }
+
             Button { player.toggle() } label: {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 72))
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(Color.black)
+                    .frame(width: 78, height: 78)
+                    .background(Theme.accent, in: Circle())
+                    .shadow(color: Theme.accent.opacity(0.45), radius: 14)
             }
-            Button { player.skip(15) } label: {
-                Image(systemName: "goforward.15").font(.system(size: 30))
-            }
+            .buttonStyle(.plain)
+
+            transportButton("goforward.15") { player.skip(15) }
         }
-        .foregroundStyle(Theme.accent)
+        .padding(.vertical, 2)
+    }
+
+    private func transportButton(_ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Theme.panel, in: Circle())
+                .overlay(Circle().stroke(Theme.panelBorder))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func markTrackRow(_ set: DJSet) -> some View {
+        Button {
+            addCue(set)
+        } label: {
+            HStack {
+                Image(systemName: "plus.circle.fill")
+                Text("MARK TRACK")
+                    .kerning(1.5)
+                Spacer()
+                Text(formatTime(player.displayTime))
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .font(.footnote.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Theme.warm, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
     }
 
     private func cueList(_ set: DJSet) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("TRACKS")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Theme.textDim)
-                    .kerning(1.5)
-                Spacer()
-                Button {
-                    addCue(set)
-                } label: {
-                    Label("Mark track", systemImage: "plus")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Theme.accent.opacity(0.16), in: Capsule())
-                }
-            }
-
+        Group {
             if set.annotations.isEmpty {
-                Text("Hit “Mark track” while playing to delineate songs in the set")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textDim)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 18)
-                Spacer(minLength: 0)
+                VStack(spacing: 6) {
+                    Text("No tracks marked yet")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.textDim)
+                    Text("Hit Mark Track while playing to delineate songs")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textDim.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(Array(set.annotations.enumerated()), id: \.element.id) { index, cue in
                         Button {
                             player.seek(to: cue.time)
                         } label: {
-                            HStack(spacing: 10) {
-                                Circle()
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 2)
                                     .fill(Theme.cueColor(index))
-                                    .frame(width: 10, height: 10)
-                                Text(cue.label)
-                                    .font(.subheadline)
-                                    .lineLimit(1)
+                                    .frame(width: 4, height: 30)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(cue.label)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                    Text(formatTime(cue.time))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(Theme.textDim)
+                                }
                                 Spacer()
-                                Text(formatTime(cue.time))
-                                    .font(.system(.caption, design: .monospaced))
+                                Image(systemName: "arrow.right.to.line")
+                                    .font(.caption)
                                     .foregroundStyle(Theme.textDim)
                             }
                         }
                         .listRowBackground(Theme.panel)
+                        .listRowSeparatorTint(Theme.panelBorder)
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 var anns = set.annotations
@@ -167,6 +233,7 @@ struct PlayerView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
     }
