@@ -47,6 +47,86 @@ enum AnalysisOutcome {
     case failed
 }
 
+// Waveforms are now time-resolved (one bin per 40ms), so a 2h set has ~180k
+// bins. JSON is far too slow at that size — caches and checkpoints are
+// binary plists with raw Float32 blobs (memcpy in and out).
+private extension Array where Element == Float {
+    var rawData: Data { withUnsafeBufferPointer { Data(buffer: $0) } }
+}
+
+private extension Data {
+    var floatArray: [Float] {
+        var out = [Float](repeating: 0, count: count / MemoryLayout<Float>.size)
+        _ = out.withUnsafeMutableBytes { copyBytes(to: $0) }
+        return out
+    }
+}
+
+private struct WaveformFile: Codable {
+    var bpm: Float
+    var amps: Data
+    var r: Data
+    var g: Data
+    var b: Data
+    var beats: Data
+}
+
+private struct CheckpointFile: Codable {
+    var totalFrames: Int
+    var frameIndex: Int
+    var binCount: Int
+    var framesPerBin: Int
+    var sampleRate: Float
+    var hopAcc: Float
+    var hopFill: Int
+    var amps: Data
+    var bandE: [Data]
+    var lp: Data
+    var envelope: Data
+}
+
+enum WaveIO {
+    static func encode(_ wf: Waveform) -> Data? {
+        let file = WaveformFile(
+            bpm: wf.bpm, amps: wf.amps.rawData,
+            r: wf.r.rawData, g: wf.g.rawData, b: wf.b.rawData,
+            beats: wf.beats.rawData)
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        return try? encoder.encode(file)
+    }
+
+    static func decodeWaveform(_ data: Data) -> Waveform? {
+        guard let f = try? PropertyListDecoder().decode(WaveformFile.self, from: data) else { return nil }
+        return Waveform(
+            amps: f.amps.floatArray, r: f.r.floatArray,
+            g: f.g.floatArray, b: f.b.floatArray,
+            beats: f.beats.floatArray, bpm: f.bpm)
+    }
+
+    static func encode(_ cp: AnalysisCheckpoint) -> Data? {
+        let file = CheckpointFile(
+            totalFrames: cp.totalFrames, frameIndex: cp.frameIndex,
+            binCount: cp.binCount, framesPerBin: cp.framesPerBin,
+            sampleRate: cp.sampleRate, hopAcc: cp.hopAcc, hopFill: cp.hopFill,
+            amps: cp.amps.rawData, bandE: cp.bandE.map(\.rawData),
+            lp: cp.lp.rawData, envelope: cp.envelope.rawData)
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        return try? encoder.encode(file)
+    }
+
+    static func decodeCheckpoint(_ data: Data) -> AnalysisCheckpoint? {
+        guard let f = try? PropertyListDecoder().decode(CheckpointFile.self, from: data) else { return nil }
+        return AnalysisCheckpoint(
+            totalFrames: f.totalFrames, frameIndex: f.frameIndex,
+            binCount: f.binCount, framesPerBin: f.framesPerBin,
+            sampleRate: f.sampleRate, amps: f.amps.floatArray,
+            bandE: f.bandE.map(\.floatArray), lp: f.lp.floatArray,
+            envelope: f.envelope.floatArray, hopAcc: f.hopAcc, hopFill: f.hopFill)
+    }
+}
+
 @MainActor
 final class WaveformStore: ObservableObject {
     static let shared = WaveformStore()
@@ -72,22 +152,22 @@ final class WaveformStore: ObservableObject {
             .appendingPathComponent("waveforms", isDirectory: true)
     }
 
-    // v3: waveform + color + sampled BPM only (fast); older caches regenerate
+    // v4: time-resolved bins (40ms), binary format; older caches regenerate
     nonisolated static func diskCacheURL(for id: UUID) -> URL {
-        cacheDir.appendingPathComponent("\(id.uuidString)-v3.json")
+        cacheDir.appendingPathComponent("\(id.uuidString)-v4.wave")
     }
 
     nonisolated static func checkpointURL(for id: UUID) -> URL {
-        cacheDir.appendingPathComponent("\(id.uuidString)-partial.json")
+        cacheDir.appendingPathComponent("\(id.uuidString)-v4.partial")
     }
 
     nonisolated static func loadCheckpoint(from url: URL) -> AnalysisCheckpoint? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(AnalysisCheckpoint.self, from: data)
+        return WaveIO.decodeCheckpoint(data)
     }
 
     nonisolated static func saveCheckpoint(_ checkpoint: AnalysisCheckpoint, to url: URL) {
-        if let data = try? JSONEncoder().encode(checkpoint) {
+        if let data = WaveIO.encode(checkpoint) {
             try? data.write(to: url)
         }
     }
@@ -101,6 +181,10 @@ final class WaveformStore: ObservableObject {
             at: Self.cacheDir.appendingPathComponent("\(id.uuidString).json"))
         try? FileManager.default.removeItem(
             at: Self.cacheDir.appendingPathComponent("\(id.uuidString)-v2.json"))
+        try? FileManager.default.removeItem(
+            at: Self.cacheDir.appendingPathComponent("\(id.uuidString)-v3.json"))
+        try? FileManager.default.removeItem(
+            at: Self.cacheDir.appendingPathComponent("\(id.uuidString)-partial.json"))
     }
 
     private var pendingQueue: [(id: UUID, url: URL)] = []
@@ -133,7 +217,7 @@ final class WaveformStore: ObservableObject {
         if waveforms[id] != nil { return }
 
         if let data = try? Data(contentsOf: Self.diskCacheURL(for: id)),
-           let cached = try? JSONDecoder().decode(Waveform.self, from: data) {
+           let cached = WaveIO.decodeWaveform(data) {
             waveforms[id] = cached
             return
         }
@@ -168,7 +252,7 @@ final class WaveformStore: ObservableObject {
         Task.detached(priority: .utility) {
             let resume = Self.loadCheckpoint(from: checkpointURL)
             let outcome = Self.analyze(
-                url: job.url, bins: 2000, resuming: resume,
+                url: job.url, resuming: resume,
                 onPiece: { partial, pct in
                     Task { @MainActor in
                         self.partials[job.id] = partial
@@ -178,7 +262,7 @@ final class WaveformStore: ObservableObject {
                 shouldAbort: { abort.isSet })
 
             if case .finished(let wf) = outcome {
-                if let data = try? JSONEncoder().encode(wf) { try? data.write(to: cacheURL) }
+                if let data = WaveIO.encode(wf) { try? data.write(to: cacheURL) }
                 try? FileManager.default.removeItem(at: checkpointURL)
             } else if case .suspended(let checkpoint) = outcome {
                 Self.saveCheckpoint(checkpoint, to: checkpointURL)
@@ -214,8 +298,11 @@ final class WaveformStore: ObservableObject {
     /// Streams the file in ~2.7s-of-audio chunks. Every few chunks it emits a
     /// partial waveform (so the UI shows the analysis growing) and can stop at
     /// any chunk boundary, returning a checkpoint that resumes mid-file.
+    /// one waveform bin per 40ms of audio, so every set has the same detail
+    nonisolated static let binDuration = 0.040
+
     nonisolated static func analyze(
-        url: URL, bins: Int,
+        url: URL,
         resuming: AnalysisCheckpoint?,
         onPiece: @escaping (Waveform, Double) -> Void = { _, _ in },
         shouldAbort: @escaping () -> Bool = { false }
@@ -251,8 +338,8 @@ final class WaveformStore: ObservableObject {
             framesPerBin = r.framesPerBin
             file.framePosition = AVAudioFramePosition(frameIndex)
         } else {
-            framesPerBin = max(1, totalFrames / bins)
-            binCount = min(bins, totalFrames / framesPerBin)
+            framesPerBin = max(1, Int(Double(sampleRate) * Self.binDuration))
+            binCount = max(1, totalFrames / framesPerBin)
             frameIndex = 0
             amps = [Float](repeating: 0, count: binCount)
             bandE = [[Float]](repeating: [Float](repeating: 0, count: binCount), count: 6)

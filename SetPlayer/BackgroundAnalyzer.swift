@@ -49,12 +49,12 @@ enum BackgroundAnalyzer {
                 if cancelled.flag { break }
                 let checkpointURL = WaveformStore.checkpointURL(for: job.id)
                 let outcome = WaveformStore.analyze(
-                    url: job.url, bins: 2000,
+                    url: job.url,
                     resuming: WaveformStore.loadCheckpoint(from: checkpointURL),
                     shouldAbort: { cancelled.flag })
                 switch outcome {
                 case .finished(let wf):
-                    if let data = try? JSONEncoder().encode(wf) {
+                    if let data = WaveIO.encode(wf) {
                         try? data.write(to: WaveformStore.diskCacheURL(for: job.id))
                     }
                     try? FileManager.default.removeItem(at: checkpointURL)
