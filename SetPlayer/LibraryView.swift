@@ -151,35 +151,99 @@ struct NowPlayingBar: View {
 
     var body: some View {
         if let set = player.current {
-            NavigationLink(value: set.id) {
+            VStack(spacing: 8) {
                 HStack(spacing: 12) {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(Theme.accent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(set.title)
-                            .font(.footnote.weight(.medium))
-                            .lineLimit(1)
-                        Text("\(formatTime(player.displayTime)) / \(formatTime(player.duration))")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.textDim)
+                    NavigationLink(value: set.id) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "waveform")
+                                .foregroundStyle(Theme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(set.title)
+                                    .font(.footnote.weight(.medium))
+                                    .lineLimit(1)
+                                Text("\(formatTime(player.displayTime)) / \(formatTime(player.duration))")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+
                     Spacer()
+
                     Button {
                         player.toggle()
                     } label: {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                             .font(.title3)
+                            .frame(width: 38, height: 38)
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.panelBorder))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+
+                MiniPlayerScrubber()
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 9)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.panelBorder))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
         }
+    }
+}
+
+struct MiniPlayerScrubber: View {
+    @ObservedObject private var player = PlayerManager.shared
+    @State private var dragTime: TimeInterval?
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let duration = max(1, player.duration)
+            let current = max(0, min(dragTime ?? player.displayTime, duration))
+            let fraction = CGFloat(current / duration)
+            let filledWidth = width * fraction
+            let knobSize: CGFloat = 11
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(height: 4)
+                Capsule()
+                    .fill(Theme.accent)
+                    .frame(width: max(4, filledWidth), height: 4)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: knobSize, height: knobSize)
+                    .shadow(color: .black.opacity(0.28), radius: 3, y: 1)
+                    .offset(x: min(max(0, filledWidth - knobSize / 2), width - knobSize))
+            }
+            .frame(height: 20)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let time = time(for: value.location.x, width: width)
+                        dragTime = time
+                        player.seek(to: time)
+                    }
+                    .onEnded { value in
+                        player.seek(to: time(for: value.location.x, width: width))
+                        dragTime = nil
+                    }
+            )
+        }
+        .frame(height: 20)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue("\(formatTime(dragTime ?? player.displayTime)) of \(formatTime(player.duration))")
+    }
+
+    private func time(for x: CGFloat, width: CGFloat) -> TimeInterval {
+        let fraction = max(0, min(1, x / max(1, width)))
+        return TimeInterval(fraction) * player.duration
     }
 }

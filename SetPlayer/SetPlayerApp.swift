@@ -19,8 +19,12 @@ struct SetPlayerApp: App {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
+                // in-app analysis must not run while backgrounded: sustained
+                // CPU alongside background audio gets the whole app killed
+                WaveformStore.shared.setSuspended(true)
                 BackgroundAnalyzer.scheduleIfNeeded()
             case .active:
+                WaveformStore.shared.setSuspended(false)
                 // pick up grids analyzed while we were in the background
                 library.analyzeAll()
             default:

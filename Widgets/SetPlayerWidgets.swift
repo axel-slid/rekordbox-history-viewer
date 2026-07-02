@@ -1,0 +1,236 @@
+import ActivityKit
+import AppIntents
+import SwiftUI
+import WidgetKit
+
+private let accent = Color(red: 0, green: 0.68, blue: 0.94)
+private let dimText = Color(white: 0.62)
+
+@main
+struct SetPlayerWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        SetActivityWidget()
+    }
+}
+
+struct SetActivityWidget: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: SetActivityAttributes.self) { context in
+            LockScreenView(context: context)
+                .activityBackgroundTint(Color(red: 0.06, green: 0.07, blue: 0.09))
+                .activitySystemActionForegroundColor(accent)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    Button(intent: TogglePlaybackIntent()) {
+                        Image(systemName: context.state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(accent)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    elapsed(context)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxHeight: .infinity, alignment: .center)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    HStack(spacing: 6) {
+                        Text(context.attributes.title)
+                            .font(.footnote.weight(.semibold))
+                            .lineLimit(1)
+                        if context.state.bpm > 0 {
+                            Text(String(format: "%.0f", context.state.bpm))
+                                .font(.system(.caption2, design: .monospaced).weight(.bold))
+                                .foregroundStyle(accent)
+                        }
+                    }
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack(spacing: 8) {
+                        WaveStrip(context: context)
+                            .frame(height: 44)
+                        progress(context)
+                    }
+                    .padding(.top, 4)
+                }
+            } compactLeading: {
+                Image(systemName: "waveform")
+                    .foregroundStyle(accent)
+            } compactTrailing: {
+                elapsed(context)
+                    .font(.system(.caption2, design: .monospaced).weight(.medium))
+                    .foregroundStyle(accent)
+                    .frame(maxWidth: 60)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+            } minimal: {
+                Image(systemName: "waveform")
+                    .foregroundStyle(accent)
+            }
+        }
+    }
+}
+
+/// Elapsed set time; ticks automatically while playing, static when paused.
+private func elapsed(_ context: ActivityViewContext<SetActivityAttributes>) -> Text {
+    if context.state.isPlaying {
+        let end = context.state.startDate.addingTimeInterval(context.attributes.duration)
+        return Text(
+            timerInterval: context.state.startDate...end,
+            countsDown: false,
+            showsHours: true)
+    }
+    return Text(format(context.state.position))
+}
+
+/// Remaining time; counts down automatically while playing.
+private func remaining(_ context: ActivityViewContext<SetActivityAttributes>) -> Text {
+    if context.state.isPlaying {
+        let end = context.state.startDate.addingTimeInterval(context.attributes.duration)
+        return Text("-") + Text(timerInterval: context.state.startDate...end, countsDown: true, showsHours: true)
+    }
+    return Text("-" + format(max(0, context.attributes.duration - context.state.position)))
+}
+
+@ViewBuilder
+private func progress(_ context: ActivityViewContext<SetActivityAttributes>) -> some View {
+    if context.state.isPlaying {
+        let end = context.state.startDate.addingTimeInterval(context.attributes.duration)
+        ProgressView(timerInterval: context.state.startDate...end, countsDown: false) {
+        } currentValueLabel: {
+        }
+        .progressViewStyle(.linear)
+        .tint(accent)
+    } else {
+        ProgressView(value: min(1, context.state.position / max(1, context.attributes.duration)))
+            .progressViewStyle(.linear)
+            .tint(dimText)
+    }
+}
+
+private func format(_ t: Double) -> String {
+    let secs = Int(t.rounded())
+    let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
+    return h > 0
+        ? String(format: "%d:%02d:%02d", h, m, s)
+        : String(format: "%d:%02d", m, s)
+}
+
+/// Position at render time. Live Activity views are static snapshots
+/// (TimelineView does not tick in them), so the waveform playhead moves on
+/// each periodic content update from the app; while playing we extrapolate
+/// from startDate so every re-render lands in the right place.
+private func livePosition(_ context: ActivityViewContext<SetActivityAttributes>) -> Double {
+    let duration = max(1, context.attributes.duration)
+    if context.state.isPlaying {
+        return min(duration, max(0, Date().timeIntervalSince(context.state.startDate)))
+    }
+    return min(duration, max(0, context.state.position))
+}
+
+/// Mini rainbow waveform; played portion at full brightness.
+struct WaveStrip: View {
+    let context: ActivityViewContext<SetActivityAttributes>
+
+    var body: some View {
+        Canvas { ctx, size in
+            let amps = context.state.amps
+            guard !amps.isEmpty else { return }
+            let hues = context.state.hues
+            let playedFrac = min(1, livePosition(context) / max(1, context.attributes.duration))
+            let midY = size.height / 2
+            let n = amps.count
+            let barSpace = size.width / CGFloat(n)
+
+            for i in 0..<n {
+                let x = CGFloat(i) * barSpace
+                let amp = CGFloat(amps[i]) / 255
+                let h = max(2, amp * size.height * 0.96)
+                let hue = Double(i < hues.count ? hues[i] : 128) / 255
+                let played = CGFloat(i) / CGFloat(n) <= CGFloat(playedFrac)
+                let color = Color(hue: hue, saturation: 0.85, brightness: played ? 1.0 : 0.4)
+                ctx.fill(
+                    Path(roundedRect: CGRect(
+                        x: x, y: midY - h / 2,
+                        width: max(1.2, barSpace * 0.68), height: h), cornerRadius: 1),
+                    with: .color(played ? color : color.opacity(0.45)))
+            }
+
+            let px = size.width * CGFloat(playedFrac)
+            ctx.fill(
+                Path(CGRect(x: px - 1, y: 0, width: 2, height: size.height)),
+                with: .color(.white))
+        }
+    }
+}
+
+struct LockScreenView: View {
+    let context: ActivityViewContext<SetActivityAttributes>
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .font(.body)
+                    .foregroundStyle(accent)
+                Text(context.attributes.title)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                Spacer()
+                if context.state.bpm > 0 {
+                    Text(String(format: "%.0f BPM", context.state.bpm))
+                        .font(.system(.caption, design: .monospaced).weight(.bold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(accent.opacity(0.15), in: Capsule())
+                }
+            }
+
+            WaveStrip(context: context)
+                .frame(height: 56)
+
+            VStack(spacing: 4) {
+                progress(context)
+                HStack {
+                    elapsed(context)
+                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    remaining(context)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(dimText)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(intent: SkipBackIntent()) {
+                    Image(systemName: "gobackward.15")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button(intent: TogglePlaybackIntent()) {
+                    Image(systemName: context.state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(accent)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button(intent: SkipForwardIntent()) {
+                    Image(systemName: "goforward.15")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+        }
+        .padding(16)
+    }
+}

@@ -12,6 +12,10 @@ targets:
     platform: iOS
     sources:
       - SetPlayer
+      - Shared
+    dependencies:
+      - target: SetPlayerWidgets
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alexdils.setplayer
@@ -25,8 +29,28 @@ targets:
         CFBundleDisplayName: Set Player
         UIBackgroundModes: [audio, processing]
         BGTaskSchedulerPermittedIdentifiers: [com.alexdils.setplayer.analyze]
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UIUserInterfaceStyle: Dark
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+  SetPlayerWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alexdils.setplayer.widgets
+        DEVELOPMENT_TEAM: 3WKAG55LV4
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Set Player
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

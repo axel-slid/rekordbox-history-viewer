@@ -47,7 +47,9 @@ enum BackgroundAnalyzer {
         DispatchQueue.global(qos: .utility).async {
             for job in pendingSets() {
                 if cancelled.flag { break }
-                if let wf = WaveformStore.generate(url: job.url, bins: 2000),
+                if let wf = WaveformStore.generate(
+                    url: job.url, bins: 2000,
+                    shouldAbort: { cancelled.flag }),
                    let data = try? JSONEncoder().encode(wf) {
                     try? data.write(to: WaveformStore.diskCacheURL(for: job.id))
                 }

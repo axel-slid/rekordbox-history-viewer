@@ -121,15 +121,6 @@ struct ScrollingWaveform: View {
                     }
                 }
             }
-            .overlay(alignment: .topTrailing) {
-                Text(zoomLabel)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.textDim)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.35), in: Capsule())
-                    .padding(6)
-            }
         }
         .gesture(
             DragGesture(minimumDistance: 2)
@@ -152,9 +143,6 @@ struct ScrollingWaveform: View {
         )
     }
 
-    private var zoomLabel: String {
-        String(format: "%.0f px/s", pxPerSecond)
-    }
 }
 
 /// Full-set overview in rainbow color: tap or drag anywhere to jump.

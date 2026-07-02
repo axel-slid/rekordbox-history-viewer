@@ -1,3 +1,4 @@
+import ActivityKit
 import AVFoundation
 import MediaPlayer
 
@@ -22,10 +23,65 @@ final class PlayerManager: NSObject, ObservableObject {
     private var anchorMedia: TimeInterval = 0
     private var anchorDevice: TimeInterval = 0
 
+    private var activity: Activity<SetActivityAttributes>?
+    private var activityTicker: Timer?
+    private var resumeAfterInterruption = false
+
     private override init() {
         super.init()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        PlayerIntentBridge.toggle = {
+            await MainActor.run { PlayerManager.shared.toggle() }
+        }
+        PlayerIntentBridge.skip = { delta in
+            await MainActor.run { PlayerManager.shared.skip(delta) }
+        }
         configureRemoteCommands()
+        observeSessionNotifications()
+        // clear any Live Activity left over from a previous run
+        Task { @MainActor in
+            for stale in Activity<SetActivityAttributes>.activities {
+                await stale.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
+
+    /// Playback silently stopping "after a while" is usually an unhandled
+    /// session interruption (call, Siri, alarm, another app). Resume when
+    /// the system says we should.
+    private func observeSessionNotifications() {
+        let nc = NotificationCenter.default
+        nc.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            switch type {
+            case .began:
+                self.resumeAfterInterruption = self.isPlaying
+                self.pause()
+            case .ended:
+                let opts = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                    .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+                if self.resumeAfterInterruption, opts.contains(.shouldResume) {
+                    self.play()
+                }
+                self.resumeAfterInterruption = false
+            @unknown default:
+                break
+            }
+        }
+        nc.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+            // headphones unplugged / speaker vanished: pause like Music does
+            if reason == .oldDeviceUnavailable { self?.pause() }
+        }
     }
 
     func load(_ set: DJSet, autoplay: Bool = true) {
@@ -40,7 +96,11 @@ final class PlayerManager: NSObject, ObservableObject {
             displayTime = 0
             loadError = nil
             pushStaticNowPlaying()
-            if autoplay { play() }
+            if autoplay {
+                play()
+            } else {
+                startOrUpdateActivity()
+            }
         } catch {
             loadError = "Couldn't open \(set.fileName): \(error.localizedDescription)"
         }
@@ -48,10 +108,12 @@ final class PlayerManager: NSObject, ObservableObject {
 
     func unload() {
         pause()
+        stopActivityTicker()
         player = nil
         current = nil
         duration = 0
         displayTime = 0
+        endActivity()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
@@ -62,7 +124,26 @@ final class PlayerManager: NSObject, ObservableObject {
         isPlaying = true
         reanchor()
         startTicker()
+        startActivityTicker()
         pushDynamicNowPlaying()
+        startOrUpdateActivity()
+    }
+
+    /// Live Activity views are static snapshots — the waveform playhead only
+    /// moves when we push a content update, so nudge it every 20s while
+    /// playing (the timer text/progress bar animate on their own).
+    private func startActivityTicker() {
+        activityTicker?.invalidate()
+        let t = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
+            self?.startOrUpdateActivity()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        activityTicker = t
+    }
+
+    private func stopActivityTicker() {
+        activityTicker?.invalidate()
+        activityTicker = nil
     }
 
     private func reanchor() {
@@ -75,7 +156,9 @@ final class PlayerManager: NSObject, ObservableObject {
         player?.pause()
         isPlaying = false
         stopTicker()
+        stopActivityTicker()
         pushDynamicNowPlaying()
+        startOrUpdateActivity()
     }
 
     func toggle() { isPlaying ? pause() : play() }
@@ -86,6 +169,7 @@ final class PlayerManager: NSObject, ObservableObject {
         displayTime = p.currentTime
         reanchor()
         pushDynamicNowPlaying()
+        startOrUpdateActivity()
     }
 
     func skip(_ delta: TimeInterval) { seek(to: liveTime() + delta) }
@@ -154,6 +238,142 @@ final class PlayerManager: NSObject, ObservableObject {
         info[MPMediaItemPropertyPlaybackDuration] = duration
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
+
+    func refreshLiveActivity() {
+        startOrUpdateActivity()
+    }
+
+    // MARK: - Live Activity / Dynamic Island
+
+    private func startOrUpdateActivity() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard let set = current else {
+            endActivity()
+            return
+        }
+
+        Task { @MainActor in
+            let attributes = self.activityAttributes(for: set)
+            let content = ActivityContent(state: self.activityState(for: set), staleDate: nil)
+            if let existing = self.activity ?? Activity<SetActivityAttributes>.activities.first {
+                if existing.attributes.setID == attributes.setID {
+                    self.activity = existing
+                    await existing.update(content)
+                } else {
+                    await existing.end(nil, dismissalPolicy: .immediate)
+                    self.activity = nil
+                    self.requestActivity(attributes: attributes, content: content)
+                }
+            } else {
+                self.requestActivity(attributes: attributes, content: content)
+            }
+        }
+    }
+
+    private func endActivity() {
+        Task { @MainActor in
+            let existing = self.activity ?? Activity<SetActivityAttributes>.activities.first
+            self.activity = nil
+            await existing?.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    private func requestActivity(
+        attributes: SetActivityAttributes,
+        content: ActivityContent<SetActivityAttributes.ContentState>
+    ) {
+        do {
+            activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
+        } catch {
+            #if DEBUG
+            print("Could not start Live Activity: \(error)")
+            #endif
+        }
+    }
+
+    private func activityAttributes(for set: DJSet) -> SetActivityAttributes {
+        SetActivityAttributes(
+            setID: set.id.uuidString,
+            title: set.title,
+            duration: max(duration, set.duration))
+    }
+
+    @MainActor
+    private func activityState(for set: DJSet) -> SetActivityAttributes.ContentState {
+        let position = max(0, min(liveTime(), max(duration, set.duration)))
+        let waveform = Self.compactWaveform(WaveformStore.shared.waveforms[set.id])
+        return SetActivityAttributes.ContentState(
+            startDate: Date().addingTimeInterval(-position),
+            isPlaying: isPlaying,
+            position: position,
+            bpm: waveform.bpm,
+            amps: waveform.amps,
+            hues: waveform.hues)
+    }
+
+    private static func compactWaveform(
+        _ waveform: Waveform?,
+        sampleCount: Int = 72
+    ) -> (bpm: Double, amps: [UInt8], hues: [UInt8]) {
+        guard let waveform, waveform.count > 0 else {
+            return fallbackActivityWaveform(sampleCount: sampleCount)
+        }
+
+        var amps: [UInt8] = []
+        var hues: [UInt8] = []
+        amps.reserveCapacity(sampleCount)
+        hues.reserveCapacity(sampleCount)
+
+        for i in 0..<sampleCount {
+            let start = i * waveform.count / sampleCount
+            let end = max(start + 1, (i + 1) * waveform.count / sampleCount)
+            let boundedEnd = min(end, waveform.count)
+            let amp = waveform.amps[start..<boundedEnd].max() ?? 0
+            let colorIndex = min(waveform.count - 1, (start + boundedEnd - 1) / 2)
+            amps.append(UInt8(max(8, min(255, Int((amp * 255).rounded())))))
+            hues.append(hueByte(
+                red: waveform.r[colorIndex],
+                green: waveform.g[colorIndex],
+                blue: waveform.b[colorIndex]))
+        }
+
+        return (Double(waveform.bpm), amps, hues)
+    }
+
+    private static func fallbackActivityWaveform(
+        sampleCount: Int
+    ) -> (bpm: Double, amps: [UInt8], hues: [UInt8]) {
+        var amps: [UInt8] = []
+        var hues: [UInt8] = []
+        amps.reserveCapacity(sampleCount)
+        hues.reserveCapacity(sampleCount)
+        for i in 0..<sampleCount {
+            let phase = Double(i) / Double(max(1, sampleCount - 1))
+            let wave = 0.45 + 0.35 * sin(phase * .pi * 6)
+            amps.append(UInt8(max(18, min(160, Int(wave * 180)))))
+            hues.append(UInt8((180 + i) % 255))
+        }
+        return (0, amps, hues)
+    }
+
+    private static func hueByte(red: Float, green: Float, blue: Float) -> UInt8 {
+        let maxValue = max(red, green, blue)
+        let minValue = min(red, green, blue)
+        let delta = maxValue - minValue
+        guard delta > 0.0001 else { return 128 }
+
+        let hue: Float
+        if maxValue == red {
+            hue = 60 * ((green - blue) / delta).truncatingRemainder(dividingBy: 6)
+        } else if maxValue == green {
+            hue = 60 * ((blue - red) / delta + 2)
+        } else {
+            hue = 60 * ((red - green) / delta + 4)
+        }
+
+        let normalized = hue < 0 ? hue + 360 : hue
+        return UInt8(max(0, min(255, Int((normalized / 360 * 255).rounded()))))
+    }
 }
 
 extension PlayerManager: AVAudioPlayerDelegate {
@@ -161,6 +381,8 @@ extension PlayerManager: AVAudioPlayerDelegate {
         isPlaying = false
         displayTime = duration
         stopTicker()
+        stopActivityTicker()
         pushDynamicNowPlaying()
+        endActivity()
     }
 }

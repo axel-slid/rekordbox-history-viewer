@@ -61,6 +61,25 @@ final class WaveformStore: ObservableObject {
 
     private var pendingQueue: [(id: UUID, url: URL)] = []
     private var workerRunning = false
+    private var suspended = false
+    private var currentAbort: AbortFlag?
+
+    final class AbortFlag: @unchecked Sendable {
+        var isSet = false
+    }
+
+    /// iOS kills background-audio apps that sustain heavy CPU while
+    /// backgrounded, which took playback down with it. Analysis therefore
+    /// runs only in the foreground; the interrupted set is re-queued and
+    /// BGProcessingTask windows handle the rest.
+    func setSuspended(_ value: Bool) {
+        suspended = value
+        if value {
+            currentAbort?.isSet = true
+        } else {
+            processNext()
+        }
+    }
 
     /// Loads from the on-disk cache if present, otherwise queues background
     /// analysis. Sets analyze one at a time; `urgent` (the set being opened)
@@ -92,35 +111,42 @@ final class WaveformStore: ObservableObject {
     }
 
     private func processNext() {
-        guard !workerRunning, !pendingQueue.isEmpty else { return }
+        guard !workerRunning, !suspended, !pendingQueue.isEmpty else { return }
         workerRunning = true
         let job = pendingQueue.removeFirst()
         let cacheURL = cacheURL(for: job.id)
         progress[job.id] = 0
 
-        // grace time so the in-flight set can finish after the app is closed
-        var graceTask: UIBackgroundTaskIdentifier = .invalid
-        graceTask = UIApplication.shared.beginBackgroundTask(withName: "waveform-analysis") {
-            UIApplication.shared.endBackgroundTask(graceTask)
-            graceTask = .invalid
-        }
+        let abort = AbortFlag()
+        currentAbort = abort
 
         Task.detached(priority: .utility) {
-            let wf = Self.generate(url: job.url, bins: 2000) { pct in
-                Task { @MainActor in self.progress[job.id] = pct }
-            }
+            let wf = Self.generate(
+                url: job.url, bins: 2000,
+                onProgress: { pct in
+                    Task { @MainActor in self.progress[job.id] = pct }
+                },
+                shouldAbort: { abort.isSet })
             if let wf, let data = try? JSONEncoder().encode(wf) {
                 try? data.write(to: cacheURL)
             }
             await MainActor.run {
-                self.generating.remove(job.id)
                 self.progress[job.id] = nil
-                if let wf { self.waveforms[job.id] = wf }
+                self.currentAbort = nil
                 self.workerRunning = false
-                self.processNext()
-                if graceTask != .invalid {
-                    UIApplication.shared.endBackgroundTask(graceTask)
+                if let wf {
+                    self.generating.remove(job.id)
+                    self.waveforms[job.id] = wf
+                    if PlayerManager.shared.current?.id == job.id {
+                        PlayerManager.shared.refreshLiveActivity()
+                    }
+                } else if abort.isSet {
+                    // suspended mid-file: keep it queued for foreground return
+                    self.pendingQueue.insert(job, at: 0)
+                } else {
+                    self.generating.remove(job.id) // unreadable file
                 }
+                self.processNext()
             }
         }
     }
@@ -132,7 +158,8 @@ final class WaveformStore: ObservableObject {
     /// envelope (512-frame hops) for beat detection.
     nonisolated static func generate(
         url: URL, bins: Int,
-        onProgress: @escaping (Double) -> Void = { _ in }
+        onProgress: @escaping (Double) -> Void = { _ in },
+        shouldAbort: @escaping () -> Bool = { false }
     ) -> Waveform? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let totalFrames = Int(file.length)
@@ -163,6 +190,7 @@ final class WaveformStore: ObservableObject {
 
         var frameIndex = 0
         while frameIndex < totalFrames {
+            if shouldAbort() { return nil }
             do { try file.read(into: buffer) } catch { break }
             let n = Int(buffer.frameLength)
             if n == 0 { break }
