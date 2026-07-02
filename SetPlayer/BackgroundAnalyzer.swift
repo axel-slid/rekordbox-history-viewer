@@ -47,11 +47,23 @@ enum BackgroundAnalyzer {
         DispatchQueue.global(qos: .utility).async {
             for job in pendingSets() {
                 if cancelled.flag { break }
-                if let wf = WaveformStore.generate(
+                let checkpointURL = WaveformStore.checkpointURL(for: job.id)
+                let outcome = WaveformStore.analyze(
                     url: job.url, bins: 2000,
-                    shouldAbort: { cancelled.flag }),
-                   let data = try? JSONEncoder().encode(wf) {
-                    try? data.write(to: WaveformStore.diskCacheURL(for: job.id))
+                    resuming: WaveformStore.loadCheckpoint(from: checkpointURL),
+                    shouldAbort: { cancelled.flag })
+                switch outcome {
+                case .finished(let wf):
+                    if let data = try? JSONEncoder().encode(wf) {
+                        try? data.write(to: WaveformStore.diskCacheURL(for: job.id))
+                    }
+                    try? FileManager.default.removeItem(at: checkpointURL)
+                case .suspended(let checkpoint):
+                    // window expired mid-file: save so the next window (or the
+                    // app) picks up exactly here
+                    WaveformStore.saveCheckpoint(checkpoint, to: checkpointURL)
+                case .failed:
+                    break
                 }
             }
             scheduleIfNeeded()

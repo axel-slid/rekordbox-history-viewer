@@ -25,17 +25,46 @@ struct Waveform: Codable {
     }
 }
 
+/// Full analysis state, checkpointed to disk so a suspension (backgrounding,
+/// BG-task expiry) never loses progress — analysis resumes mid-file.
+struct AnalysisCheckpoint: Codable {
+    var totalFrames: Int
+    var frameIndex: Int
+    var binCount: Int
+    var framesPerBin: Int
+    var sampleRate: Float
+    var amps: [Float]
+    var bandE: [[Float]]
+    var lp: [Float]
+    var envelope: [Float]
+    var hopAcc: Float
+    var hopFill: Int
+}
+
+enum AnalysisOutcome {
+    case finished(Waveform)
+    case suspended(AnalysisCheckpoint)
+    case failed
+}
+
 @MainActor
 final class WaveformStore: ObservableObject {
     static let shared = WaveformStore()
 
     @Published private(set) var waveforms: [UUID: Waveform] = [:]
+    /// grows piece by piece while a set is being analyzed
+    @Published private(set) var partials: [UUID: Waveform] = [:]
     @Published private(set) var generating: Set<UUID> = []
     @Published private(set) var progress: [UUID: Double] = [:]
 
     private init() {
         try? FileManager.default.createDirectory(
             at: Self.cacheDir, withIntermediateDirectories: true)
+    }
+
+    /// Finished waveform if available, else the in-progress partial.
+    func waveform(for id: UUID) -> Waveform? {
+        waveforms[id] ?? partials[id]
     }
 
     nonisolated static var cacheDir: URL {
@@ -48,13 +77,26 @@ final class WaveformStore: ObservableObject {
         cacheDir.appendingPathComponent("\(id.uuidString)-v2.json")
     }
 
-    private func cacheURL(for id: UUID) -> URL {
-        Self.diskCacheURL(for: id)
+    nonisolated static func checkpointURL(for id: UUID) -> URL {
+        cacheDir.appendingPathComponent("\(id.uuidString)-partial.json")
+    }
+
+    nonisolated static func loadCheckpoint(from url: URL) -> AnalysisCheckpoint? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(AnalysisCheckpoint.self, from: data)
+    }
+
+    nonisolated static func saveCheckpoint(_ checkpoint: AnalysisCheckpoint, to url: URL) {
+        if let data = try? JSONEncoder().encode(checkpoint) {
+            try? data.write(to: url)
+        }
     }
 
     func removeCache(for id: UUID) {
         waveforms[id] = nil
-        try? FileManager.default.removeItem(at: cacheURL(for: id))
+        partials[id] = nil
+        try? FileManager.default.removeItem(at: Self.diskCacheURL(for: id))
+        try? FileManager.default.removeItem(at: Self.checkpointURL(for: id))
         try? FileManager.default.removeItem(
             at: Self.cacheDir.appendingPathComponent("\(id.uuidString).json"))
     }
@@ -69,9 +111,9 @@ final class WaveformStore: ObservableObject {
     }
 
     /// iOS kills background-audio apps that sustain heavy CPU while
-    /// backgrounded, which took playback down with it. Analysis therefore
-    /// runs only in the foreground; the interrupted set is re-queued and
-    /// BGProcessingTask windows handle the rest.
+    /// backgrounded. Analysis therefore pauses on backgrounding — but the
+    /// engine checkpoints, so it resumes mid-file in the foreground or in
+    /// BGProcessingTask windows. Nothing is lost.
     func setSuspended(_ value: Bool) {
         suspended = value
         if value {
@@ -88,7 +130,7 @@ final class WaveformStore: ObservableObject {
         let id = set.id
         if waveforms[id] != nil { return }
 
-        if let data = try? Data(contentsOf: cacheURL(for: id)),
+        if let data = try? Data(contentsOf: Self.diskCacheURL(for: id)),
            let cached = try? JSONDecoder().decode(Waveform.self, from: data) {
             waveforms[id] = cached
             return
@@ -97,7 +139,7 @@ final class WaveformStore: ObservableObject {
         if generating.contains(id) {
             if urgent, let idx = pendingQueue.firstIndex(where: { $0.id == id }) {
                 pendingQueue.insert(pendingQueue.remove(at: idx), at: 0)
-                }
+            }
             return
         }
 
@@ -114,83 +156,141 @@ final class WaveformStore: ObservableObject {
         guard !workerRunning, !suspended, !pendingQueue.isEmpty else { return }
         workerRunning = true
         let job = pendingQueue.removeFirst()
-        let cacheURL = cacheURL(for: job.id)
-        progress[job.id] = 0
+        let cacheURL = Self.diskCacheURL(for: job.id)
+        let checkpointURL = Self.checkpointURL(for: job.id)
+        if progress[job.id] == nil { progress[job.id] = 0 }
 
         let abort = AbortFlag()
         currentAbort = abort
 
         Task.detached(priority: .utility) {
-            let wf = Self.generate(
-                url: job.url, bins: 2000,
-                onProgress: { pct in
-                    Task { @MainActor in self.progress[job.id] = pct }
+            let resume = Self.loadCheckpoint(from: checkpointURL)
+            let outcome = Self.analyze(
+                url: job.url, bins: 2000, resuming: resume,
+                onPiece: { partial, pct in
+                    Task { @MainActor in
+                        self.partials[job.id] = partial
+                        self.progress[job.id] = pct
+                    }
                 },
                 shouldAbort: { abort.isSet })
-            if let wf, let data = try? JSONEncoder().encode(wf) {
-                try? data.write(to: cacheURL)
+
+            if case .finished(let wf) = outcome {
+                if let data = try? JSONEncoder().encode(wf) { try? data.write(to: cacheURL) }
+                try? FileManager.default.removeItem(at: checkpointURL)
+            } else if case .suspended(let checkpoint) = outcome {
+                Self.saveCheckpoint(checkpoint, to: checkpointURL)
             }
+
             await MainActor.run {
-                self.progress[job.id] = nil
                 self.currentAbort = nil
                 self.workerRunning = false
-                if let wf {
+                switch outcome {
+                case .finished(let wf):
                     self.generating.remove(job.id)
+                    self.partials[job.id] = nil
+                    self.progress[job.id] = nil
                     self.waveforms[job.id] = wf
                     if PlayerManager.shared.current?.id == job.id {
                         PlayerManager.shared.refreshLiveActivity()
                     }
-                } else if abort.isSet {
-                    // suspended mid-file: keep it queued for foreground return
+                case .suspended:
+                    // keep the partial visible; resume from the checkpoint later
                     self.pendingQueue.insert(job, at: 0)
-                } else {
-                    self.generating.remove(job.id) // unreadable file
+                case .failed:
+                    self.generating.remove(job.id)
+                    self.partials[job.id] = nil
+                    self.progress[job.id] = nil
                 }
                 self.processNext()
             }
         }
     }
 
-    // MARK: - analysis
+    // MARK: - analysis engine
 
-    /// Streams the file once: per display bin, peak amplitude + 6-band energy split
-    /// via cascaded one-pole lowpasses (rainbow hue), and a fine-grained energy
-    /// envelope (512-frame hops) for beat detection.
-    nonisolated static func generate(
+    /// Streams the file in ~2.7s-of-audio chunks. Every few chunks it emits a
+    /// partial waveform (so the UI shows the analysis growing) and can stop at
+    /// any chunk boundary, returning a checkpoint that resumes mid-file.
+    nonisolated static func analyze(
         url: URL, bins: Int,
-        onProgress: @escaping (Double) -> Void = { _ in },
+        resuming: AnalysisCheckpoint?,
+        onPiece: @escaping (Waveform, Double) -> Void = { _, _ in },
         shouldAbort: @escaping () -> Bool = { false }
-    ) -> Waveform? {
-        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+    ) -> AnalysisOutcome {
+        guard let file = try? AVAudioFile(forReading: url) else { return .failed }
         let totalFrames = Int(file.length)
-        guard totalFrames > 0 else { return nil }
+        guard totalFrames > 0 else { return .failed }
 
         let format = file.processingFormat
         let sampleRate = Float(format.sampleRate)
-        let framesPerBin = max(1, totalFrames / bins)
-        let binCount = min(bins, totalFrames / framesPerBin)
 
-        var amps = [Float](repeating: 0, count: binCount)
+        var frameIndex: Int
+        var amps: [Float]
+        var bandE: [[Float]]
+        var lp: [Float]
+        var envelope: [Float]
+        var hopAcc: Float
+        var hopFill: Int
+        let binCount: Int
+        let framesPerBin: Int
+
+        if let r = resuming,
+           r.totalFrames == totalFrames, r.sampleRate == sampleRate,
+           r.bandE.count == 6, r.amps.count == r.binCount {
+            frameIndex = r.frameIndex
+            amps = r.amps
+            bandE = r.bandE
+            lp = r.lp
+            envelope = r.envelope
+            hopAcc = r.hopAcc
+            hopFill = r.hopFill
+            binCount = r.binCount
+            framesPerBin = r.framesPerBin
+            file.framePosition = AVAudioFramePosition(frameIndex)
+        } else {
+            framesPerBin = max(1, totalFrames / bins)
+            binCount = min(bins, totalFrames / framesPerBin)
+            frameIndex = 0
+            amps = [Float](repeating: 0, count: binCount)
+            bandE = [[Float]](repeating: [Float](repeating: 0, count: binCount), count: 6)
+            lp = [Float](repeating: 0, count: 5)
+            envelope = []
+            envelope.reserveCapacity(totalFrames / 512 + 1)
+            hopAcc = 0
+            hopFill = 0
+        }
+
         // 6 bands: <80, 80-200, 200-500, 500-1500, 1500-4000, >4000 Hz
         let cutoffs: [Float] = [80, 200, 500, 1500, 4000]
         let alphas = cutoffs.map { 1 - exp(-2 * Float.pi * $0 / sampleRate) }
-        var lp = [Float](repeating: 0, count: 5)
-        var bandE = [[Float]](repeating: [Float](repeating: 0, count: binCount), count: 6)
-
-        // beat-detection envelope: one value per 512-frame hop
         let hopSize = 512
-        var envelope: [Float] = []
-        envelope.reserveCapacity(totalFrames / hopSize + 1)
-        var hopAcc: Float = 0
-        var hopFill = 0
-        var lastReported = 0.0
 
         let chunkFrames: AVAudioFrameCount = 1 << 17
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
+            return .failed
+        }
 
-        var frameIndex = 0
+        func checkpoint() -> AnalysisCheckpoint {
+            AnalysisCheckpoint(
+                totalFrames: totalFrames, frameIndex: frameIndex,
+                binCount: binCount, framesPerBin: framesPerBin,
+                sampleRate: sampleRate, amps: amps, bandE: bandE, lp: lp,
+                envelope: envelope, hopAcc: hopAcc, hopFill: hopFill)
+        }
+
+        func partialWaveform() -> Waveform {
+            let completedBins = min(binCount, frameIndex / framesPerBin)
+            var normalized = amps
+            let peak = max(normalized.max() ?? 1, 0.0001)
+            for i in 0..<binCount { normalized[i] = min(1, normalized[i] / peak) }
+            let (r, g, b) = makeColors(bandE: bandE, binCount: binCount, upTo: completedBins)
+            return Waveform(amps: normalized, r: r, g: g, b: b)
+        }
+
+        var chunksSincePiece = 0
         while frameIndex < totalFrames {
-            if shouldAbort() { return nil }
+            if shouldAbort() { return .suspended(checkpoint()) }
             do { try file.read(into: buffer) } catch { break }
             let n = Int(buffer.frameLength)
             if n == 0 { break }
@@ -227,24 +327,36 @@ final class WaveformStore: ObservableObject {
             }
             frameIndex += n
 
-            // streaming pass is ~90% of the work; report whole percents only
-            let pct = 0.9 * Double(frameIndex) / Double(totalFrames)
-            if Int(pct * 100) != Int(lastReported * 100) {
-                lastReported = pct
-                onProgress(pct)
+            chunksSincePiece += 1
+            if chunksSincePiece >= 8 || frameIndex >= totalFrames {
+                chunksSincePiece = 0
+                onPiece(partialWaveform(), 0.9 * Double(frameIndex) / Double(totalFrames))
             }
         }
 
+        // finish: normalize, color all bins, detect beats
         let peak = max(amps.max() ?? 1, 0.0001)
         for i in 0..<binCount { amps[i] = min(1, amps[i] / peak) }
+        let (r, g, b) = makeColors(bandE: bandE, binCount: binCount, upTo: binCount)
 
-        // rainbow: blend band hues weighted by (boosted) energy share
+        onPiece(Waveform(amps: amps, r: r, g: g, b: b), 0.92)
+        let grid = detectBeats(envelope: envelope, rate: sampleRate / Float(hopSize))
+
+        return .finished(Waveform(
+            amps: amps, r: r, g: g, b: b,
+            beats: grid?.beats ?? [], bpm: grid?.bpm ?? 0))
+    }
+
+    /// Rainbow hues from the 6-band energy split; bins past `upTo` stay dim gray.
+    nonisolated private static func makeColors(
+        bandE: [[Float]], binCount: Int, upTo: Int
+    ) -> ([Float], [Float], [Float]) {
         let hues: [Float] = [0, 30, 55, 120, 200, 275]
         let boost: [Float] = [1.0, 1.0, 1.6, 2.2, 3.2, 4.5]
-        var r = [Float](repeating: 0, count: binCount)
-        var g = [Float](repeating: 0, count: binCount)
-        var b = [Float](repeating: 0, count: binCount)
-        for i in 0..<binCount {
+        var r = [Float](repeating: 0.3, count: binCount)
+        var g = [Float](repeating: 0.3, count: binCount)
+        var b = [Float](repeating: 0.35, count: binCount)
+        for i in 0..<min(upTo, binCount) {
             var total: Float = 0
             var hue: Float = 0
             for k in 0..<6 {
@@ -257,13 +369,7 @@ final class WaveformStore: ObservableObject {
                 : SIMD3<Float>(0.3, 0.3, 0.35)
             r[i] = color.x; g[i] = color.y; b[i] = color.z
         }
-
-        onProgress(0.92)
-        let grid = detectBeats(envelope: envelope, rate: sampleRate / Float(hopSize))
-        onProgress(1.0)
-        return Waveform(
-            amps: amps, r: r, g: g, b: b,
-            beats: grid?.beats ?? [], bpm: grid?.bpm ?? 0)
+        return (r, g, b)
     }
 
     nonisolated static func hsv(_ h: Float, _ s: Float, _ v: Float) -> SIMD3<Float> {
@@ -325,7 +431,6 @@ final class WaveformStore: ObservableObject {
                 if score > bestScore { bestScore = score; bestLag = lag }
             }
             if bestLag > minLag && bestLag < maxLag && bestScore > 0 {
-                // parabolic refinement for sub-sample tempo accuracy
                 let y0 = scores[bestLag - 1], y1 = scores[bestLag], y2 = scores[bestLag + 1]
                 let denom = y0 - 2 * y1 + y2
                 let offset = denom != 0 ? 0.5 * (y0 - y2) / denom : 0
@@ -349,7 +454,6 @@ final class WaveformStore: ObservableObject {
             return best
         }
 
-        // anchor on the strongest onset in the first 8 seconds
         let anchorWindow = min(n, Int(rate * 8))
         var cursor = Float((0..<anchorWindow).max(by: { onset[$0] < onset[$1] }) ?? 0)
 

@@ -45,6 +45,12 @@ struct PlayerView: View {
         }
         .navigationTitle(set?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                AirPlayButton()
+                    .frame(width: 32, height: 32)
+            }
+        }
         .onAppear {
             guard let set else { return }
             if player.current?.id != set.id {

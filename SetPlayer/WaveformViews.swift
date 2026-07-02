@@ -18,7 +18,7 @@ struct ScrollingWaveform: View {
     var body: some View {
         TimelineView(.animation) { _ in
             Canvas { ctx, size in
-                guard let wf = waveStore.waveforms[set.id], wf.count > 0, player.duration > 0 else { return }
+                guard let wf = waveStore.waveform(for: set.id), wf.count > 0, player.duration > 0 else { return }
 
                 let midX = size.width / 2
                 let midY = size.height / 2
@@ -156,7 +156,7 @@ struct OverviewWaveform: View {
         TimelineView(.animation) { _ in
             GeometryReader { geo in
                 Canvas { ctx, size in
-                    guard let wf = waveStore.waveforms[set.id], wf.count > 0, player.duration > 0 else { return }
+                    guard let wf = waveStore.waveform(for: set.id), wf.count > 0, player.duration > 0 else { return }
 
                     let midY = size.height / 2
                     let now = player.liveTime()
