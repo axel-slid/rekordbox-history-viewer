@@ -233,6 +233,7 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func pushDynamicNowPlaying() {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPMediaItemPropertyTitle] = current?.title ?? "Set"
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = liveTime()
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         info[MPMediaItemPropertyPlaybackDuration] = duration
@@ -294,7 +295,6 @@ final class PlayerManager: NSObject, ObservableObject {
     private func activityAttributes(for set: DJSet) -> SetActivityAttributes {
         SetActivityAttributes(
             setID: set.id.uuidString,
-            title: set.title,
             duration: max(duration, set.duration))
     }
 
@@ -306,6 +306,7 @@ final class PlayerManager: NSObject, ObservableObject {
             startDate: Date().addingTimeInterval(-position),
             isPlaying: isPlaying,
             position: position,
+            title: set.title,
             bpm: waveform.bpm,
             amps: waveform.amps,
             hues: waveform.hues)

@@ -5,6 +5,10 @@ struct LibraryView: View {
     @EnvironmentObject private var library: Library
     @ObservedObject private var player = PlayerManager.shared
     @State private var showImporter = false
+    @State private var renamingSet: DJSet?
+    @State private var renameText = ""
+    @State private var newFolderSet: DJSet?
+    @State private var newFolderName = ""
 
     var body: some View {
         NavigationStack {
@@ -57,6 +61,28 @@ struct LibraryView: View {
         } message: {
             Text(library.importError ?? "")
         }
+        .alert("Rename set", isPresented: .init(
+            get: { renamingSet != nil },
+            set: { if !$0 { renamingSet = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+            Button("Save") {
+                if let set = renamingSet { library.rename(set.id, to: renameText) }
+                renamingSet = nil
+            }
+            Button("Cancel", role: .cancel) { renamingSet = nil }
+        }
+        .alert("New folder", isPresented: .init(
+            get: { newFolderSet != nil },
+            set: { if !$0 { newFolderSet = nil } }
+        )) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                if let set = newFolderSet { library.setFolder(set.id, folder: newFolderName) }
+                newFolderSet = nil
+            }
+            Button("Cancel", role: .cancel) { newFolderSet = nil }
+        }
         .onAppear { library.rescan() }
     }
 
@@ -75,20 +101,83 @@ struct LibraryView: View {
 
     private var setList: some View {
         List {
-            ForEach(library.sets) { set in
-                NavigationLink(value: set.id) {
-                    SetRow(set: set)
+            ForEach(library.folderNames, id: \.self) { folder in
+                Section {
+                    rows(library.sets.filter { $0.folder == folder })
+                } header: {
+                    Label(folder, systemImage: "folder.fill")
+                        .foregroundStyle(Theme.accent)
                 }
-                .listRowBackground(Theme.panel)
             }
-            .onDelete { offsets in
-                for i in offsets { library.delete(library.sets[i]) }
+
+            let unfiled = library.sets.filter { $0.folder == nil }
+            if !unfiled.isEmpty {
+                Section {
+                    rows(unfiled)
+                } header: {
+                    if !library.folderNames.isEmpty {
+                        Text("Unfiled")
+                    }
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .navigationDestination(for: UUID.self) { id in
             if let set = library.sets.first(where: { $0.id == id }) {
                 PlayerView(setID: set.id)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rows(_ sets: [DJSet]) -> some View {
+        ForEach(sets) { set in
+            NavigationLink(value: set.id) {
+                SetRow(set: set)
+            }
+            .listRowBackground(Theme.panel)
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) {
+                    library.delete(set)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                Button {
+                    renameText = set.title
+                    renamingSet = set
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                .tint(Theme.accent)
+            }
+            .contextMenu {
+                Button {
+                    renameText = set.title
+                    renamingSet = set
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Menu {
+                    ForEach(library.folderNames, id: \.self) { folder in
+                        Button(folder) { library.setFolder(set.id, folder: folder) }
+                    }
+                    Button {
+                        newFolderName = ""
+                        newFolderSet = set
+                    } label: {
+                        Label("New Folder…", systemImage: "folder.badge.plus")
+                    }
+                    if set.folder != nil {
+                        Button("Remove from Folder") { library.setFolder(set.id, folder: nil) }
+                    }
+                } label: {
+                    Label("Move to Folder", systemImage: "folder")
+                }
+                Button(role: .destructive) {
+                    library.delete(set)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
     }
@@ -183,7 +272,9 @@ struct NowPlayingBar: View {
                     .buttonStyle(.plain)
                 }
 
-                MiniPlayerScrubber()
+                OverviewWaveform(set: set)
+                    .frame(height: 30)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)

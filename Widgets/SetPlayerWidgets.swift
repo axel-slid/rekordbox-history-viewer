@@ -38,7 +38,7 @@ struct SetActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.center) {
                     HStack(spacing: 6) {
-                        Text(context.attributes.title)
+                        Text(context.state.title)
                             .font(.footnote.weight(.semibold))
                             .lineLimit(1)
                         if context.state.bpm > 0 {
@@ -57,8 +57,8 @@ struct SetActivityWidget: Widget {
                     .padding(.top, 4)
                 }
             } compactLeading: {
-                Image(systemName: "waveform")
-                    .foregroundStyle(accent)
+                CompactWaveStrip(context: context)
+                    .frame(width: 44, height: 18)
             } compactTrailing: {
                 elapsed(context)
                     .font(.system(.caption2, design: .monospaced).weight(.medium))
@@ -167,70 +167,97 @@ struct WaveStrip: View {
     }
 }
 
+/// ~14-bar waveform for the compact Dynamic Island slot.
+struct CompactWaveStrip: View {
+    let context: ActivityViewContext<SetActivityAttributes>
+
+    var body: some View {
+        Canvas { ctx, size in
+            let source = context.state.amps
+            guard !source.isEmpty else { return }
+            let hues = context.state.hues
+            let playedFrac = min(1, livePosition(context) / max(1, context.attributes.duration))
+            let n = 14
+            let midY = size.height / 2
+            let barSpace = size.width / CGFloat(n)
+
+            for i in 0..<n {
+                let start = i * source.count / n
+                let end = max(start + 1, (i + 1) * source.count / n)
+                let amp = CGFloat(source[start..<min(end, source.count)].max() ?? 0) / 255
+                let hue = Double(hues[min(start, hues.count - 1)]) / 255
+                let h = max(2, amp * size.height)
+                let played = CGFloat(i) / CGFloat(n) <= CGFloat(playedFrac)
+                let color = Color(hue: hue, saturation: 0.85, brightness: played ? 1.0 : 0.45)
+                ctx.fill(
+                    Path(roundedRect: CGRect(
+                        x: CGFloat(i) * barSpace, y: midY - h / 2,
+                        width: max(1, barSpace * 0.62), height: h), cornerRadius: 0.5),
+                    with: .color(played ? color : color.opacity(0.5)))
+            }
+        }
+    }
+}
+
+/// Lock-screen card. iOS clips Live Activities past ~160pt of content, so
+/// this layout stays deliberately tight — nothing below gets cut off.
 struct LockScreenView: View {
     let context: ActivityViewContext<SetActivityAttributes>
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "waveform")
-                    .font(.body)
+                    .font(.footnote)
                     .foregroundStyle(accent)
-                Text(context.attributes.title)
-                    .font(.subheadline.weight(.bold))
+                Text(context.state.title)
+                    .font(.footnote.weight(.bold))
                     .lineLimit(1)
-                Spacer()
                 if context.state.bpm > 0 {
                     Text(String(format: "%.0f BPM", context.state.bpm))
-                        .font(.system(.caption, design: .monospaced).weight(.bold))
+                        .font(.system(.caption2, design: .monospaced).weight(.bold))
                         .foregroundStyle(accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
                         .background(accent.opacity(0.15), in: Capsule())
                 }
+                Spacer()
+                elapsed(context)
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.white)
             }
 
             WaveStrip(context: context)
-                .frame(height: 56)
+                .frame(height: 46)
 
-            VStack(spacing: 4) {
-                progress(context)
-                HStack {
-                    elapsed(context)
-                        .font(.system(.caption, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    remaining(context)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(dimText)
-                }
-            }
+            progress(context)
 
-            HStack {
-                Spacer()
+            HStack(spacing: 28) {
                 Button(intent: SkipBackIntent()) {
                     Image(systemName: "gobackward.15")
-                        .font(.system(size: 26, weight: .medium))
+                        .font(.system(size: 21, weight: .medium))
                         .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
-                Spacer()
                 Button(intent: TogglePlaybackIntent()) {
                     Image(systemName: context.state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 48))
+                        .font(.system(size: 38))
                         .foregroundStyle(accent)
                 }
                 .buttonStyle(.plain)
-                Spacer()
                 Button(intent: SkipForwardIntent()) {
                     Image(systemName: "goforward.15")
-                        .font(.system(size: 26, weight: .medium))
+                        .font(.system(size: 21, weight: .medium))
                         .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
                 Spacer()
+                remaining(context)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(dimText)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 }

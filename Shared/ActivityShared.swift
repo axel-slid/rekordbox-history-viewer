@@ -11,6 +11,8 @@ struct SetActivityAttributes: ActivityAttributes {
         var isPlaying: Bool
         /// position in seconds at the moment of the last update
         var position: Double
+        /// in content state (not attributes) so renames show up live
+        var title: String
         var bpm: Double
         /// downsampled overview waveform: amplitude 0-255 per bar
         var amps: [UInt8]
@@ -19,7 +21,6 @@ struct SetActivityAttributes: ActivityAttributes {
     }
 
     var setID: String
-    var title: String
     var duration: Double
 }
 

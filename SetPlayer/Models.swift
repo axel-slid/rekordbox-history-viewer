@@ -14,4 +14,5 @@ struct DJSet: Codable, Identifiable, Equatable {
     var addedAt: Date
     var fileSize: Int64
     var annotations: [SetAnnotation] = []
+    var folder: String?
 }

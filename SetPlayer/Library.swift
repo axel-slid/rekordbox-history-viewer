@@ -114,6 +114,28 @@ final class Library: ObservableObject {
         save()
     }
 
+    var folderNames: [String] {
+        Array(Set(sets.compactMap(\.folder))).sorted()
+    }
+
+    func rename(_ id: UUID, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = sets.firstIndex(where: { $0.id == id }) else { return }
+        sets[idx].title = trimmed
+        save()
+        if PlayerManager.shared.current?.id == id {
+            PlayerManager.shared.current = sets[idx]
+            PlayerManager.shared.refreshLiveActivity()
+        }
+    }
+
+    func setFolder(_ id: UUID, folder: String?) {
+        guard let idx = sets.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = folder?.trimmingCharacters(in: .whitespacesAndNewlines)
+        sets[idx].folder = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        save()
+    }
+
     func setAnnotations(_ annotations: [SetAnnotation], for id: UUID) {
         guard let idx = sets.firstIndex(where: { $0.id == id }) else { return }
         sets[idx].annotations = annotations.sorted { $0.time < $1.time }
