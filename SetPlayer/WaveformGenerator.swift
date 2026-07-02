@@ -72,9 +72,9 @@ final class WaveformStore: ObservableObject {
             .appendingPathComponent("waveforms", isDirectory: true)
     }
 
-    // v2: rainbow colors + beat grid (older caches are ignored and regenerated)
+    // v3: waveform + color + sampled BPM only (fast); older caches regenerate
     nonisolated static func diskCacheURL(for id: UUID) -> URL {
-        cacheDir.appendingPathComponent("\(id.uuidString)-v2.json")
+        cacheDir.appendingPathComponent("\(id.uuidString)-v3.json")
     }
 
     nonisolated static func checkpointURL(for id: UUID) -> URL {
@@ -99,6 +99,8 @@ final class WaveformStore: ObservableObject {
         try? FileManager.default.removeItem(at: Self.checkpointURL(for: id))
         try? FileManager.default.removeItem(
             at: Self.cacheDir.appendingPathComponent("\(id.uuidString).json"))
+        try? FileManager.default.removeItem(
+            at: Self.cacheDir.appendingPathComponent("\(id.uuidString)-v2.json"))
     }
 
     private var pendingQueue: [(id: UUID, url: URL)] = []
@@ -339,12 +341,12 @@ final class WaveformStore: ObservableObject {
         for i in 0..<binCount { amps[i] = min(1, amps[i] / peak) }
         let (r, g, b) = makeColors(bandE: bandE, binCount: binCount, upTo: binCount)
 
-        onPiece(Waveform(amps: amps, r: r, g: g, b: b), 0.92)
-        let grid = detectBeats(envelope: envelope, rate: sampleRate / Float(hopSize))
+        onPiece(Waveform(amps: amps, r: r, g: g, b: b), 0.95)
+        let bpm = estimateBPM(envelope: envelope, rate: sampleRate / Float(hopSize))
 
         return .finished(Waveform(
             amps: amps, r: r, g: g, b: b,
-            beats: grid?.beats ?? [], bpm: grid?.bpm ?? 0))
+            beats: [], bpm: bpm))
     }
 
     /// Rainbow hues from the 6-band energy split; bins past `upTo` stay dim gray.
@@ -389,44 +391,38 @@ final class WaveformStore: ObservableObject {
         return rgb + SIMD3(m, m, m)
     }
 
-    // MARK: - beat grid
-
-    private struct BeatGrid {
-        let bpm: Float
-        let beats: [Float]
-    }
-
-    /// Onset flux + windowed autocorrelation for local tempo, then forward
-    /// beat tracking that snaps each predicted beat to the nearest onset peak.
-    nonisolated private static func detectBeats(envelope: [Float], rate: Float) -> BeatGrid? {
+    // MARK: - BPM estimate
+    // Beat tracking is intentionally gone (it was slow and unreliable on long
+    // sets). BPM comes from autocorrelating onset energy in a handful of
+    // sampled 16s windows — near-free compared to the old full-set pass.
+    nonisolated private static func estimateBPM(envelope: [Float], rate: Float) -> Float {
         let n = envelope.count
-        guard n > Int(rate * 20) else { return nil }
+        let win = Int(rate * 16)
+        let minLag = max(2, Int(rate * 60 / 190))
+        let maxLag = Int(rate * 60 / 70)
+        guard maxLag < win, n > win + 2 else { return 0 }
 
         var onset = [Float](repeating: 0, count: n)
         for i in 1..<n { onset[i] = max(0, envelope[i] - envelope[i - 1]) }
 
-        // local tempo every 8s over 16s windows, 70–190 BPM
-        let win = Int(rate * 16)
-        let hop = Int(rate * 8)
-        let minLag = max(2, Int(rate * 60 / 190))
-        let maxLag = Int(rate * 60 / 70)
-        guard maxLag < win else { return nil }
-
-        var periods: [(center: Int, lag: Float)] = []
-        var start = 0
-        while start + win <= n {
+        let windowCount = min(8, max(1, n / (win * 2)))
+        var lags: [Float] = []
+        for w in 0..<windowCount {
+            let start = windowCount == 1
+                ? (n - win) / 2
+                : (n - win) * w / (windowCount - 1)
             var bestLag = 0
             var bestScore: Float = 0
             var scores = [Float](repeating: 0, count: maxLag + 1)
             for lag in minLag...maxLag {
-                var s: Float = 0
+                var sum: Float = 0
                 var i = start
                 let end = start + win - lag
                 while i < end {
-                    s += onset[i] * onset[i + lag]
+                    sum += onset[i] * onset[i + lag]
                     i += 1
                 }
-                let score = s / Float(win - lag)
+                let score = sum / Float(win - lag)
                 scores[lag] = score
                 if score > bestScore { bestScore = score; bestLag = lag }
             }
@@ -434,50 +430,11 @@ final class WaveformStore: ObservableObject {
                 let y0 = scores[bestLag - 1], y1 = scores[bestLag], y2 = scores[bestLag + 1]
                 let denom = y0 - 2 * y1 + y2
                 let offset = denom != 0 ? 0.5 * (y0 - y2) / denom : 0
-                periods.append((start + win / 2, Float(bestLag) + offset))
+                lags.append(Float(bestLag) + offset)
             }
-            start += hop
         }
-        guard !periods.isEmpty else { return nil }
-
-        let sortedLags = periods.map(\.lag).sorted()
-        let medianLag = sortedLags[sortedLags.count / 2]
-        let bpm = 60 * rate / medianLag
-
-        func localLag(at index: Int) -> Float {
-            var best = periods[0].lag
-            var bestDist = Int.max
-            for p in periods {
-                let d = abs(p.center - index)
-                if d < bestDist { bestDist = d; best = p.lag }
-            }
-            return best
-        }
-
-        let anchorWindow = min(n, Int(rate * 8))
-        var cursor = Float((0..<anchorWindow).max(by: { onset[$0] < onset[$1] }) ?? 0)
-
-        var beats: [Float] = []
-        beats.reserveCapacity(n / Int(medianLag))
-        while cursor < Float(n) {
-            beats.append(cursor / rate)
-            let lag = localLag(at: Int(cursor))
-            var next = cursor + lag
-            let radius = Int(lag * 0.12)
-            let center = Int(next)
-            if radius > 0, center - radius > 0, center + radius < n {
-                var bestIdx = center
-                var bestVal: Float = -1
-                for j in (center - radius)...(center + radius) where onset[j] > bestVal {
-                    bestVal = onset[j]
-                    bestIdx = j
-                }
-                next = Float(bestIdx)
-            }
-            if next <= cursor { break }
-            cursor = next
-        }
-        guard beats.count > 4 else { return nil }
-        return BeatGrid(bpm: bpm, beats: beats)
+        guard !lags.isEmpty else { return 0 }
+        let median = lags.sorted()[lags.count / 2]
+        return 60 * rate / median
     }
 }
