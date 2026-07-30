@@ -321,7 +321,7 @@ const PlayerWindow = ({children, frame, start, end, detail = false}) => {
 };
 
 export const SetPlayerDemo = () => {
-  const frame = useCurrentFrame() * (240 / 360);
+  const frame = useCurrentFrame() * (240 / 480);
   const {fps} = useVideoConfig();
   const detailReveal = interpolate(frame, [104, 132], [0, 1], clamp);
   const featureScene = interpolate(frame, [166, 184], [0, 1], clamp);
