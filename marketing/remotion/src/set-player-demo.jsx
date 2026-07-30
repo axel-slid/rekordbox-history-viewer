@@ -3,12 +3,12 @@ import {
   AbsoluteFill,
   Img,
   interpolate,
-  random,
   spring,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 import appIcon from "../../../SetPlayerMac/Assets.xcassets/AppIcon.appiconset/icon_256.png";
+import sunsetPhoto from "../../../docs/set-player-sunset.jpg";
 
 const pink = "#ff2e78";
 const orange = "#ff962f";
@@ -44,99 +44,6 @@ const Wave = ({frame, opacity = 1}) => {
       <rect x={sweep} y="205" width="4" height="130" rx="2" fill="#fff" opacity=".75" />
       <circle cx={sweep + 2} cy="270" r="8" fill={pink} opacity=".8" />
     </svg>
-  );
-};
-
-const Equalizer = ({frame}) => (
-  <div
-    style={{
-      position: "absolute",
-      left: 0,
-      right: 0,
-      bottom: -15,
-      height: 150,
-      display: "flex",
-      alignItems: "flex-end",
-      gap: 5,
-      opacity: 0.18,
-      filter: "blur(.2px)",
-    }}
-  >
-    {Array.from({length: 90}, (_, index) => {
-      const seed = random(`bar-${index}`);
-      const height = 14 + (0.5 + 0.5 * Math.sin(frame * (0.13 + seed * 0.12) + index)) * (35 + seed * 105);
-      return (
-        <span
-          key={index}
-          style={{
-            flex: 1,
-            height,
-            borderRadius: "4px 4px 0 0",
-            background: index % 3 === 0 ? orange : index % 3 === 1 ? pink : cyan,
-            boxShadow: `0 0 10px ${index % 3 === 0 ? orange : index % 3 === 1 ? pink : cyan}`,
-          }}
-        />
-      );
-    })}
-  </div>
-);
-
-const GlowOrb = ({frame, index}) => {
-  const seed = random(`orb-${index}`);
-  const x = (index * 173 + frame * (0.25 + seed * 0.25)) % 1060 - 50;
-  const y = 80 + ((index * 109 + seed * 260) % 410) + Math.sin(frame / 22 + index) * 30;
-  const color = index % 3 === 0 ? pink : index % 3 === 1 ? orange : cyan;
-
-  return (
-    <span
-      style={{
-        position: "absolute",
-        left: x,
-        top: y,
-        width: 4 + seed * 7,
-        height: 4 + seed * 7,
-        borderRadius: "50%",
-        background: color,
-        boxShadow: `0 0 ${10 + seed * 20}px ${color}`,
-        opacity: 0.3 + seed * 0.45,
-      }}
-    />
-  );
-};
-
-const Chip = ({text, color, left, top, start, frame, icon, hideAt = 240}) => {
-  const show = spring({
-    frame: frame - start,
-    fps: 30,
-    config: {damping: 12, stiffness: 145, mass: 0.75},
-  });
-  const y = Math.sin((frame + start) / 12) * 3;
-  const hide = interpolate(frame, [hideAt - 14, hideAt], [1, 0], clamp);
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left,
-        top: top + y,
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 14px",
-        borderRadius: 999,
-        background: "rgba(12, 14, 13, .86)",
-        border: `1px solid ${color}8f`,
-        boxShadow: `0 16px 36px #000b, 0 0 20px ${color}2c`,
-        backdropFilter: "blur(16px)",
-        color: "#fff",
-        font: "750 14px Inter, ui-sans-serif, system-ui",
-        opacity: show * hide,
-        transform: `translateY(${(1 - show) * 25}px) scale(${0.7 + show * 0.3})`,
-      }}
-    >
-      <span style={{color, fontSize: 17, textShadow: `0 0 10px ${color}`}}>{icon}</span>
-      {text}
-    </div>
   );
 };
 
@@ -311,12 +218,29 @@ const DetailMock = ({frame}) => {
             margin: "8px 11px",
             borderRadius: 13,
             overflow: "hidden",
-            background:
-              "radial-gradient(circle at 82% 27%, #ffd48c 0 3%, #ff9f5366 4%, transparent 12%), linear-gradient(#334b58 0, #d98766 45%, #344a45 47%, #17201d 100%)",
+            background: "#1b201c",
           }}
         >
+          <Img
+            src={sunsetPhoto}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "brightness(.72) saturate(.92)",
+              transform: `scale(${1.02 + (frame - 108) * 0.0007})`,
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(90deg,rgba(8,11,9,.82),rgba(8,11,9,.08) 70%), linear-gradient(0deg,rgba(8,11,9,.74),transparent 54%)",
+            }}
+          />
           <svg width="100%" height="100%" style={{position: "absolute", inset: 0}}>
-            <path d="M0 154 L95 105 L160 142 L235 88 L330 148 L430 96 L610 158 L650 245 L0 245Z" fill="#1d2925" opacity=".78" />
             <polyline
               points={Array.from({length: 56}, (_, i) => `${200 + i * 8},${151 + Math.sin(i * 1.3 + frame * 0.17) * (7 + (i % 5) * 2)}`).join(" ")}
               fill="none"
@@ -408,15 +332,10 @@ export const SetPlayerDemo = () => {
     <AbsoluteFill
       style={{
         overflow: "hidden",
-        background:
-          "radial-gradient(circle at 15% 20%, #541832 0, transparent 38%), radial-gradient(circle at 78% 74%, #16424b 0, transparent 42%), linear-gradient(145deg, #151713, #080908 68%)",
+        background: "#10120f",
       }}
     >
-      <Equalizer frame={frame} />
-      {Array.from({length: 22}, (_, index) => (
-        <GlowOrb key={index} frame={frame} index={index} />
-      ))}
-      <Wave frame={frame} opacity={0.12 + featureScene * 0.72} />
+      <Wave frame={frame} opacity={featureScene * 0.55} />
 
       <PlayerWindow frame={frame} start={0} end={121}>
         <HomeMock />
@@ -439,11 +358,6 @@ export const SetPlayerDemo = () => {
       >
         <Img src={appIcon} style={{width: "100%", height: "100%", borderRadius: 20}} />
       </div>
-
-      <Chip text="Live lyrics" color={pink} left={50} top={74} start={32} frame={frame} icon="❞" hideAt={112} />
-      <Chip text="Rekordbox history" color={orange} left={692} top={88} start={52} frame={frame} icon="↻" hideAt={112} />
-      <Chip text="Record app audio" color={pink} left={61} top={426} start={72} frame={frame} icon="●" hideAt={112} />
-      <Chip text="Per-app mixer" color={cyan} left={748} top={424} start={88} frame={frame} icon="≋" hideAt={112} />
 
       <div
         style={{
@@ -505,10 +419,6 @@ export const SetPlayerDemo = () => {
         >
           <Img src={appIcon} style={{width: "100%", height: "100%", borderRadius: 27}} />
         </div>
-        <Chip text="Photos + locations" color={orange} left={68} top={340} start={176} frame={frame} icon="⌖" hideAt={224} />
-        <Chip text="Beat + phrase visuals" color={pink} left={327} top={400} start={182} frame={frame} icon="⌁" hideAt={224} />
-        <Chip text="iPhone sync" color={cyan} left={694} top={332} start={188} frame={frame} icon="◫" hideAt={224} />
-        <Chip text="Track matching" color={pink} left={585} top={455} start={194} frame={frame} icon="✓" hideAt={224} />
       </div>
 
       <div

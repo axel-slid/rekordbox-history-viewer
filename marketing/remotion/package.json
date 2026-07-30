@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "render": "remotion render src/index.jsx SetPlayerDemo ../../docs/set-player-demo.gif --codec=gif --every-nth-frame=3 --scale=0.65 --overwrite"
+    "render": "remotion render src/index.jsx SetPlayerDemo ../../docs/set-player-demo.gif --codec=gif --every-nth-frame=2 --scale=0.65 --overwrite"
   },
   "dependencies": {
     "@remotion/cli": "4.0.501",

@@ -6,7 +6,7 @@ const RemotionRoot = () => (
     id="SetPlayerDemo"
     component={SetPlayerDemo}
     durationInFrames={240}
-    fps={30}
+    fps={60}
     width={960}
     height={540}
   />
