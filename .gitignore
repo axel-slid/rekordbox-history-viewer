@@ -1,3 +1,8 @@
 build/dd/
+build/mac-dd/
+build/*/
+build/*.zip
+build/*.sha256
+node_modules/
 *.xcodeproj
 xcuserdata/

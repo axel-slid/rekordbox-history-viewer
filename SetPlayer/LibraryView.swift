@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
@@ -9,16 +10,18 @@ struct LibraryView: View {
     @State private var renameText = ""
     @State private var newFolderSet: DJSet?
     @State private var newFolderName = ""
+    @State private var navigationPath: [UUID] = []
+    @State private var handledLaunchRequest = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ZStack {
                 Theme.background.ignoresSafeArea()
 
                 if library.sets.isEmpty {
                     emptyState
                 } else {
-                    setList
+                    activityFeed
                 }
             }
             .navigationTitle("Sets")
@@ -83,7 +86,22 @@ struct LibraryView: View {
             }
             Button("Cancel", role: .cancel) { newFolderSet = nil }
         }
-        .onAppear { library.rescan() }
+        .onAppear {
+            library.rescan()
+            openRequestedSet()
+        }
+    }
+
+    private func openRequestedSet() {
+        guard !handledLaunchRequest else { return }
+        handledLaunchRequest = true
+
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flagIndex = arguments.firstIndex(of: "--open-set"),
+              arguments.indices.contains(flagIndex + 1) else { return }
+        let requestedFile = arguments[flagIndex + 1]
+        guard let set = library.sets.first(where: { $0.fileName == requestedFile }) else { return }
+        navigationPath = [set.id]
     }
 
     private var emptyState: some View {
@@ -99,29 +117,17 @@ struct LibraryView: View {
         }
     }
 
-    private var setList: some View {
-        List {
-            ForEach(library.folderNames, id: \.self) { folder in
-                Section {
-                    rows(library.sets.filter { $0.folder == folder })
-                } header: {
-                    Label(folder, systemImage: "folder.fill")
-                        .foregroundStyle(Theme.accent)
+    private var activityFeed: some View {
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                ForEach(library.sets.sorted { $0.addedAt > $1.addedAt }) { set in
+                    activityCard(set)
                 }
             }
-
-            let unfiled = library.sets.filter { $0.folder == nil }
-            if !unfiled.isEmpty {
-                Section {
-                    rows(unfiled)
-                } header: {
-                    if !library.folderNames.isEmpty {
-                        Text("Unfiled")
-                    }
-                }
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
-        .scrollContentBackground(.hidden)
+        .background(Theme.background)
         .navigationDestination(for: UUID.self) { id in
             if let set = library.sets.first(where: { $0.id == id }) {
                 PlayerView(setID: set.id)
@@ -130,108 +136,214 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
-    private func rows(_ sets: [DJSet]) -> some View {
-        ForEach(sets) { set in
-            NavigationLink(value: set.id) {
-                SetRow(set: set)
+    private func activityCard(_ set: DJSet) -> some View {
+        NavigationLink(value: set.id) {
+            SetActivityCard(set: set)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                renameText = set.title
+                renamingSet = set
+            } label: {
+                Label("Rename", systemImage: "pencil")
             }
-            .listRowBackground(Theme.panel)
-            .swipeActions(edge: .trailing) {
-                Button(role: .destructive) {
-                    library.delete(set)
-                } label: {
-                    Label("Delete", systemImage: "trash")
+            Menu {
+                ForEach(library.folderNames, id: \.self) { folder in
+                    Button(folder) { library.setFolder(set.id, folder: folder) }
                 }
                 Button {
-                    renameText = set.title
-                    renamingSet = set
+                    newFolderName = ""
+                    newFolderSet = set
                 } label: {
-                    Label("Rename", systemImage: "pencil")
+                    Label("New Folder…", systemImage: "folder.badge.plus")
                 }
-                .tint(Theme.accent)
+                if set.folder != nil {
+                    Button("Remove from Folder") {
+                        library.setFolder(set.id, folder: nil)
+                    }
+                }
+            } label: {
+                Label("Move to Folder", systemImage: "folder")
             }
-            .contextMenu {
-                Button {
-                    renameText = set.title
-                    renamingSet = set
-                } label: {
-                    Label("Rename", systemImage: "pencil")
-                }
-                Menu {
-                    ForEach(library.folderNames, id: \.self) { folder in
-                        Button(folder) { library.setFolder(set.id, folder: folder) }
-                    }
-                    Button {
-                        newFolderName = ""
-                        newFolderSet = set
-                    } label: {
-                        Label("New Folder…", systemImage: "folder.badge.plus")
-                    }
-                    if set.folder != nil {
-                        Button("Remove from Folder") { library.setFolder(set.id, folder: nil) }
-                    }
-                } label: {
-                    Label("Move to Folder", systemImage: "folder")
-                }
-                Button(role: .destructive) {
-                    library.delete(set)
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
+            Button(role: .destructive) {
+                library.delete(set)
+            } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }
 }
 
-struct SetRow: View {
+struct SetActivityCard: View {
+    @EnvironmentObject private var library: Library
     let set: DJSet
 
     @ObservedObject private var waveStore = WaveformStore.shared
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "waveform")
-                .foregroundStyle(Theme.accent)
-                .frame(width: 34, height: 34)
-                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(set.title)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                Text(meta)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(set.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(set.addedAt.formatted(date: .abbreviated, time: .shortened))
+                        if let folder = set.folder {
+                            Text("·")
+                            Label(folder, systemImage: "folder.fill")
+                        }
+                    }
                     .font(.caption)
                     .foregroundStyle(Theme.textDim)
+                    if let location = set.locationName {
+                        Label(location, systemImage: "mappin.and.ellipse")
+                            .font(.caption)
+                            .foregroundStyle(Theme.accent)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textDim)
             }
-            Spacer(minLength: 4)
-            if let wf = waveStore.waveforms[set.id], wf.bpm > 0 {
-                Text(String(format: "%.0f BPM", wf.bpm))
-                    .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(Theme.accent.opacity(0.12), in: Capsule())
-            } else if waveStore.generating.contains(set.id) {
-                if let pct = waveStore.progress[set.id] {
-                    Text("\(Int(pct * 100))%")
-                        .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(Theme.textDim)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.07), in: Capsule())
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
+            .padding(14)
+
+            activityCover
+                .frame(height: 210)
+                .clipped()
+
+            HStack(spacing: 0) {
+                activityStat("DURATION", formatTime(set.duration))
+                activityStat("BPM", bpmText)
+                activityStat("TRACKS", "\(set.annotations.count)")
+                activityStat("MEDIA", "\(set.photos.count + set.videos.count)")
+            }
+            .padding(.vertical, 13)
+        }
+        .background(Theme.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.panelBorder))
+    }
+
+    @ViewBuilder
+    private var activityCover: some View {
+        if let url = library.coverPhotoURL(for: set),
+           let image = UIImage(contentsOfFile: url.path) {
+            ZStack(alignment: .bottomTrailing) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                if set.photos.count + set.videos.count > 1 {
+                    Label(
+                        "\(set.photos.count + set.videos.count)",
+                        systemImage: "photo.on.rectangle.angled")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.62), in: Capsule())
+                        .padding(10)
+                }
+            }
+        } else {
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Theme.accent.opacity(0.28),
+                        Theme.background,
+                        Theme.warm.opacity(0.16)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+                ActivityWaveformThumbnail(set: set)
+                    .padding(.horizontal, 18)
+                VStack {
+                    Spacer()
+                    HStack {
+                        Label(
+                            set.videos.isEmpty
+                                ? "Add photos or muted videos inside the set"
+                                : "\(set.videos.count) muted video\(set.videos.count == 1 ? "" : "s")",
+                            systemImage: set.videos.isEmpty
+                                ? "photo.badge.plus"
+                                : "video.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                        Spacer()
+                    }
+                    .padding(14)
                 }
             }
         }
-        .padding(.vertical, 3)
     }
 
-    private var meta: String {
-        var parts = [formatTime(set.duration), formatSize(set.fileSize)]
-        parts.append(set.addedAt.formatted(date: .abbreviated, time: .shortened))
-        if !set.annotations.isEmpty { parts.append("\(set.annotations.count) cues") }
-        return parts.joined(separator: " · ")
+    private var bpmText: String {
+        guard let bpm = waveStore.waveforms[set.id]?.bpm, bpm > 0 else { return "—" }
+        return String(format: "%.0f", bpm)
+    }
+
+    private func activityStat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Theme.textDim)
+                .kerning(0.9)
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct ActivityWaveformThumbnail: View {
+    @ObservedObject private var store = WaveformStore.shared
+    let set: DJSet
+
+    var body: some View {
+        Canvas { context, size in
+            guard let waveform = store.waveform(for: set.id), waveform.count > 0 else {
+                var x: CGFloat = 0
+                while x < size.width {
+                    let height = size.height * (0.18 + abs(sin(x * 0.045)) * 0.48)
+                    context.fill(
+                        Path(roundedRect: CGRect(
+                            x: x,
+                            y: (size.height - height) / 2,
+                            width: 2,
+                            height: height), cornerRadius: 1),
+                        with: .color(Theme.accent.opacity(0.45)))
+                    x += 4
+                }
+                return
+            }
+
+            var x: CGFloat = 0
+            while x < size.width {
+                let index = min(
+                    waveform.count - 1,
+                    Int(CGFloat(waveform.count) * x / max(1, size.width)))
+                let height = max(2, CGFloat(waveform.amps[index]) * size.height * 0.78)
+                let color = Color(
+                    red: Double(waveform.r[index]),
+                    green: Double(waveform.g[index]),
+                    blue: Double(waveform.b[index]))
+                context.fill(
+                    Path(roundedRect: CGRect(
+                        x: x,
+                        y: (size.height - height) / 2,
+                        width: 2.2,
+                        height: height), cornerRadius: 1),
+                    with: .color(color))
+                x += 4
+            }
+        }
     }
 }
 

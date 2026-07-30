@@ -15,6 +15,12 @@ struct SetPlayerApp: App {
                 .environmentObject(library)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
+                .task {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(3))
+                        library.reloadIfChanged()
+                    }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -26,6 +32,7 @@ struct SetPlayerApp: App {
             case .active:
                 WaveformStore.shared.setSuspended(false)
                 // pick up grids analyzed while we were in the background
+                library.reloadIfChanged()
                 library.analyzeAll()
             default:
                 break

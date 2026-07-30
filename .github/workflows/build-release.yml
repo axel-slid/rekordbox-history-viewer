@@ -1,0 +1,125 @@
+name: Build and release Set Player
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: set-player-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build macOS and iOS
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Verify tagged version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' SetPlayerMac/Info.plist)"
+          if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
+            echo "Tag $RELEASE_TAG does not match app version v$app_version." >&2
+            exit 1
+          fi
+
+      - name: Build macOS application
+        run: |
+          xcodebuild \
+            -project SetPlayer.xcodeproj \
+            -scheme SetPlayerMac \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/release \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build iOS application
+        run: |
+          xcodebuild \
+            -project SetPlayer.xcodeproj \
+            -scheme SetPlayer \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios-ci \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Sign and archive macOS application
+        run: |
+          codesign --force --deep --sign - \
+            "build/release/Build/Products/Release/Set Player.app"
+          codesign --verify --deep --strict \
+            "build/release/Build/Products/Release/Set Player.app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/release/Build/Products/Release/Set Player.app" \
+            "build/Set-Player-macOS-arm64.zip"
+
+      - name: Upload macOS application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Set-Player-macOS-arm64
+          path: build/Set-Player-macOS-arm64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download native build
+        uses: actions/download-artifact@v4
+        with:
+          name: Set-Player-macOS-arm64
+          path: release
+
+      - name: Generate checksum
+        working-directory: release
+        run: sha256sum Set-Player-macOS-arm64.zip > SHA256SUMS.txt
+
+      - name: Create release or update its assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mapfile -t assets < <(find release -maxdepth 1 -type f -print | sort)
+          if gh release view "$RELEASE_TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --clobber \
+              --repo "$REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --generate-notes \
+              --title "Set Player $RELEASE_TAG" \
+              --repo "$REPOSITORY"
+          fi

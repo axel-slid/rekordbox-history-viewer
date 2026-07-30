@@ -1,0 +1,44 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #030008;
+  cursor: none;
+  user-select: none;
+}
+
+#canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: block;
+  transform-origin: center;
+  will-change: transform, filter;
+}
+
+#beat-dot {
+  position: fixed;
+  z-index: 2;
+  right: 18px;
+  bottom: 18px;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.86),
+    0 0 12px rgba(255, 255, 255, 0.82);
+  opacity: 0.72;
+  pointer-events: none;
+  transform: scale(0.84);
+  will-change: transform, opacity, box-shadow;
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Rekordbox</title>
+  <path d="M84 130 238 40c11-7 25-7 36 0l154 90-77 45a126 126 0 0 0-190 0Z" fill="#000"/>
+  <path d="m59 173 77 44a126 126 0 0 0 96 166v89L80 382c-13-8-21-22-21-38Z" fill="#000"/>
+  <path d="m453 173-77 44a126 126 0 0 1-96 166v89l152-90c13-8 21-22 21-38Z" fill="#000"/>
+  <circle cx="256" cy="258" r="63" fill="#000"/>
+</svg>

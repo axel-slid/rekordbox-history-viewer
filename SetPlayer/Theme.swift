@@ -12,6 +12,15 @@ extension Color {
 /// rekordbox-style colorway: near-black chrome, signature blue accent,
 /// RGB waveform (low = blue, mid = amber, high = white).
 enum Theme {
+#if os(macOS)
+    static var background: Color { MacThemeStore.shared.selectedTheme.background }
+    static var panel: Color { MacThemeStore.shared.selectedTheme.panel }
+    static var panelBorder: Color { MacThemeStore.shared.selectedTheme.border }
+    static var accent: Color { MacThemeStore.shared.selectedTheme.accent }
+    static var warm: Color { MacThemeStore.shared.selectedTheme.warm }
+    static var textDim: Color { MacThemeStore.shared.selectedTheme.muted }
+    static var playhead: Color { MacThemeStore.shared.selectedTheme.playhead }
+#else
     static let background = Color(hex: 0x121419)
     static let panel = Color(hex: 0x1C1F26)
     static let panelBorder = Color(hex: 0x2A2E38)
@@ -19,6 +28,7 @@ enum Theme {
     static let warm = Color(hex: 0xE8641E)
     static let textDim = Color(hex: 0x8A919E)
     static let playhead = Color(hex: 0xFF3B30)
+#endif
 
     /// hot-cue palette for annotations
     static let cueColors: [Color] = [

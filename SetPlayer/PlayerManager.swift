@@ -23,13 +23,9 @@ final class PlayerManager: NSObject, ObservableObject {
     private var anchorMedia: TimeInterval = 0
     private var anchorDevice: TimeInterval = 0
 
-    /// The custom Live Activity is the only playback surface. Publishing
-    /// system Now Playing info would put iOS's own media card on the lock
-    /// screen and hand it the Dynamic Island while playing, hiding ours —
-    /// so it stays off. (Flip both flags to trade back to the system player
-    /// with waveform artwork + Spotify-style expand.)
-    private let liveActivityEnabled = true
-    private let systemNowPlayingEnabled = false
+    /// Use the standard iOS playback surface and keep the app widget-free.
+    private let liveActivityEnabled = false
+    private let systemNowPlayingEnabled = true
 
     private var activity: Activity<SetActivityAttributes>?
     private var activityTicker: Timer?
@@ -100,6 +96,10 @@ final class PlayerManager: NSObject, ObservableObject {
 
     func load(_ set: DJSet, autoplay: Bool = true) {
         guard let url = library?.audioURL(for: set) else { return }
+        player?.stop()
+        isPlaying = false
+        stopTicker()
+        stopActivityTicker()
         do {
             let p = try AVAudioPlayer(contentsOf: url)
             p.delegate = self
